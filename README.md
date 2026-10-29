@@ -108,7 +108,9 @@ On the Review screen, **Share video** and **Share overlay** send the video and a
 - **To burn it in:** `brew install ffmpeg`, then `tools/burn-overlay.sh game.mov game.ass game-with-overlay.mp4`. It re-encodes at 30 fps by default (the camera records 120, which makes a huge file), using the Mac hardware encoder when available. Pass `0` as the fourth argument to keep the original frame rate.
 
 Checked: I rendered a test overlay onto a video with ffmpeg and libass and looked at the frames, and timed a 2 minute overlay (about 17 KB of overlay file per second of video at the default two updates a second; the overlay added about a quarter to the encoding time).
-Not done: burning in on the phone. The usual route is an ffmpeg library, but ffmpeg-kit was retired and its iOS binaries are no longer published, so I did not add a dependency I could not test. A native AVFoundation module is the alternative if you want one-tap export on the phone.
+### On the phone (iPhone, experimental)
+`modules/rallycam-export` is a small native iOS module (Swift, AVFoundation). It reads the recorded video frame by frame, draws the same overlay scene (`buildScene` in `src/export/ass.ts`) on every frame with Core Graphics, keeps about 30 frames per second, and writes a new H.264 .mp4 with AAC audio. The Review screen shows **Save video with overlay** with a progress bar and Cancel, then opens the share sheet (Save Video, AirDrop, and so on). It only appears in a development build on an iPhone, not in Expo Go or on Android.
+I wrote it without being able to compile Swift, so expect the first Xcode build to need fixes. After pulling: `npx expo prebuild --platform ios` (this installs the module's pod), then build in Xcode. ffmpeg-kit was not used because it was retired and its iOS binaries are no longer published.
 
 ## Development build with Xcode (free Apple ID, needs a Mac)
 1. Install Xcode from the Mac App Store, then open it once and accept the licence. Install CocoaPods: `brew install cocoapods` (or `sudo gem install cocoapods`).

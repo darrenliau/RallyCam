@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { OverlayData, OverlaySnapshot } from '../analysis/overlay';
 import type { MatchConfig, Rally } from '../engine/types';
-import { assAlpha, assColor, assText, assTime, buildAss, buildSegments, ellipse, roundRect } from './ass';
+import { assAlpha, assColor, assText, assTime, buildAss, buildScene, buildSegments, ellipse, roundRect } from './ass';
 
 describe('ASS helpers', () => {
   it('formats times as h:mm:ss.cc', () => {
@@ -106,5 +106,62 @@ describe('buildAss', () => {
     const evil = buildAss({ config: { ...config, players: { A: ['{\\p1}x'], B: ['Sam'] } }, rallies, overlay, durationMs: 10000 });
     expect(evil).not.toContain('}{\\p1}x');
     expect(evil).toContain('}p1x');
+  });
+});
+
+describe('buildScene (also read by the iPhone exporter)', () => {
+  const config: MatchConfig = { type: 'doubles', players: { A: ['You', 'Mia'], B: ['Sam', 'Jun'] }, bestOf: 1, firstServer: 'A' };
+  const corners = { farLeft: { x: 0.3, y: 0.4 }, farRight: { x: 0.7, y: 0.4 }, nearRight: { x: 0.95, y: 0.9 }, nearLeft: { x: 0.05, y: 0.9 } };
+  const snaps: OverlaySnapshot[] = Array.from({ length: 12 }, (_, i) => ({
+    t: 500 + i * 500,
+    tracks: [0, 1, 2, 3].map((id) => ({ id, u: 0.3 + id * 0.1 + i * 0.01, v: id < 2 ? 0.8 : 0.2 })),
+    assign: [0, 1, 2, 3],
+    dist: [i, i, i, i],
+    shuttle: { speedKmh: 100 + i, shots: i, lastShot: { type: 'CLEAR', player: 'You', number: i } },
+  }));
+  const overlay: OverlayData = { version: 1, frameAspect: 16 / 9, corners, snapshots: snaps };
+  const rallies: Rally[] = [{ winner: 'A', startMs: 0, endMs: 3000, source: 'manual' }];
+  const scene = buildScene({ config, rallies, overlay, durationMs: 8000 });
+
+  it('is a 1920 wide scene for a 16:9 video', () => {
+    expect(scene.width).toBe(1920);
+    expect(scene.height).toBe(1080);
+    expect(scene.items.length).toBeGreaterThan(50);
+  });
+
+  it('has items the Swift decoder can read: finite numbers, ordered times, paired glide targets, known anchors', () => {
+    for (const it of scene.items) {
+      for (const n of [it.l, it.a, it.b, it.x, it.y]) expect(Number.isFinite(n)).toBe(true);
+      expect(it.b).toBeGreaterThan(it.a);
+      expect(it.mx === undefined).toBe(it.my === undefined);
+      expect(it.c).toMatch(/^#[0-9A-Fa-f]{6}$/);
+      if (it.k === 's') {
+        expect(it.o).toBeGreaterThanOrEqual(0);
+        expect(it.o).toBeLessThanOrEqual(1);
+      } else {
+        expect([7, 8, 9]).toContain(it.an);
+        expect(it.z).toBeGreaterThan(0);
+        expect(it.s).not.toMatch(/[{}\\]/);
+      }
+    }
+  });
+
+  it('writes paths in the m / l / b form the Swift parser reads, with the right number of numbers', () => {
+    const perCommand: Record<string, number> = { m: 2, l: 2, b: 6 };
+    for (const it of scene.items) {
+      if (it.k !== 's') continue;
+      const tokens = it.d.split(' ');
+      let i = 0;
+      while (i < tokens.length) {
+        const need = perCommand[tokens[i]];
+        expect(need, `unknown command in ${it.d.slice(0, 40)}`).toBeDefined();
+        for (let j = 1; j <= need; j++) expect(Number.isFinite(Number(tokens[i + j]))).toBe(true);
+        i += need + 1;
+      }
+    }
+  });
+
+  it('survives a JSON round trip unchanged (it is written to a file for the phone)', () => {
+    expect(JSON.parse(JSON.stringify(scene))).toEqual(scene);
   });
 });

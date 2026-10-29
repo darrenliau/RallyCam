@@ -12,7 +12,9 @@ import { longestRun, progression, rallyStats } from '../../engine/stats';
 import { Button, Card, Label, Stat } from '../../components/ui';
 import { MatchOverlay } from '../../components/MatchOverlay';
 import { buildAss } from '../../export/ass';
+import { cancelExport, canExportOnDevice, exportVideoWithOverlay } from '../../export/nativeExport';
 import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFiles';
+import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
 import { colors } from '../../theme';
 
@@ -30,6 +32,8 @@ export default function MatchReview() {
   const [overlay, setOverlay] = useState<OverlayData | null>(null);
   const [showOverlay, setShowOverlay] = useState(true);
   const [playMs, setPlayMs] = useState(0);
+  const [exporting, setExporting] = useState<number | null>(null); // null = not exporting, else 0..1
+  const [exportError, setExportError] = useState<string | null>(null);
   useEffect(() => { getOverlay(id).then(setOverlay); }, [id]);
   useEffect(() => {
     const timer = setInterval(() => setPlayMs(player.currentTime * 1000), 200);
@@ -104,6 +108,47 @@ export default function MatchReview() {
         <Card><Text style={s.muted}>No video was saved for this match.</Text></Card>
       )}
 
+      {match.videoUri && overlay && canExportOnDevice && (
+        <Card style={{ gap: 8 }}>
+          <Label>Save a video with the overlay</Label>
+          <Text style={s.muted}>
+            Makes a new 30 frames per second video with the overlay drawn on it. Keep the app open while it works. A long game takes a few minutes.
+          </Text>
+          {exporting == null ? (
+            <Button
+              label="Save video with overlay"
+              onPress={async () => {
+                setExportError(null);
+                setExporting(0);
+                try {
+                  const duration = match.durationMs ?? ((state.rallies[state.rallies.length - 1]?.endMs ?? 0) + 5000);
+                  const uri = await exportVideoWithOverlay({
+                    videoUri: match.videoUri!,
+                    input: { config: state.config, rallies: state.rallies, overlay, durationMs: duration },
+                    name: baseName(match.videoUri!),
+                    fps: 30,
+                    onProgress: setExporting,
+                  });
+                  setExporting(null);
+                  await Sharing.shareAsync(uri, { mimeType: 'video/mp4', dialogTitle: 'Game video with overlay' });
+                } catch (e) {
+                  setExporting(null);
+                  const message = e instanceof Error ? e.message : String(e);
+                  if (!message.includes('cancelled')) setExportError(message);
+                }
+              }}
+            />
+          ) : (
+            <>
+              <View style={s.barBack}><View style={[s.barFill, { width: `${Math.round(exporting * 100)}%` }]} /></View>
+              <Text style={s.muted}>Exporting… {Math.round(exporting * 100)}%</Text>
+              <Button kind="ghost" label="Cancel" onPress={() => cancelExport()} />
+            </>
+          )}
+          {exportError && <Text style={[s.muted, { color: colors.red }]}>Export failed: {exportError}</Text>}
+        </Card>
+      )}
+
       {match.videoUri && overlay && (
         <Card style={{ gap: 8 }}>
           <Label>Share with the overlay</Label>
@@ -164,6 +209,8 @@ export default function MatchReview() {
 }
 
 const s = StyleSheet.create({
+  barBack: { height: 8, borderRadius: 4, backgroundColor: colors.line, overflow: 'hidden' },
+  barFill: { height: 8, backgroundColor: colors.accent },
   toggle: { color: colors.accent, fontSize: 13, fontWeight: '600' },
   back: { color: colors.muted, fontSize: 16 },
   title: { color: colors.text, fontSize: 28, fontWeight: '700' },

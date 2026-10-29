@@ -66,32 +66,77 @@ export function ellipse(rx: number, ry: number): string {
   return `m ${w} ${cy} b ${w} ${n1(cy + ky)} ${n1(cx + kx)} ${h} ${cx} ${h} b ${n1(cx - kx)} ${h} 0 ${n1(cy + ky)} 0 ${cy} b 0 ${n1(cy - ky)} ${n1(cx - kx)} 0 ${cx} 0 b ${n1(cx + kx)} 0 ${w} ${n1(cy - ky)} ${w} ${cy}`;
 }
 
-interface Ctx {
-  k: number; // design px to ASS px
-  font: string;
-  lines: string[];
+/**
+ * One thing to draw for a stretch of the video, in a 1920 wide coordinate space. The ASS writer below and the
+ * on-phone exporter (modules/rallycam-export) both draw from the same list, so they look alike.
+ */
+export interface SceneShape {
+  k: 's';
+  l: number; // layer, drawn low to high
+  a: number; // start, ms
+  b: number; // end, ms
+  x: number; // top left of the shape
+  y: number;
+  mx?: number; // where it glides to by the end
+  my?: number;
+  d: string; // path in ASS drawing commands: m (move), l (line), b (cubic curve)
+  c: string; // fill colour '#RRGGBB'
+  o: number; // fill opacity 0..1 (0 = no fill)
+  sc?: string; // outline colour
+  sw?: number; // outline width
 }
 
-function dialogue(c: Ctx, layer: number, startMs: number, endMs: number, text: string) {
-  if (endMs - startMs < 10) return;
-  c.lines.push(`Dialogue: ${layer},${assTime(startMs)},${assTime(endMs)},Default,,0,0,0,,${text}`);
+export interface SceneText {
+  k: 't';
+  l: number;
+  a: number;
+  b: number;
+  x: number;
+  y: number;
+  mx?: number;
+  my?: number;
+  s: string;
+  z: number; // font size
+  w: 0 | 1; // bold
+  an: 7 | 8 | 9; // x is the left / centre / right edge of the text, y is its top
+  c: string;
+  sp: number; // letter spacing
+}
+
+export type SceneItem = SceneShape | SceneText;
+
+export interface Scene {
+  width: number;
+  height: number;
+  items: SceneItem[];
+}
+
+interface Ctx {
+  k: number; // design px to scene px
+  items: SceneItem[];
 }
 
 type Anchor = 7 | 8 | 9; // top left / top centre / top right
 
 interface Pos { x: number; y: number }
 
-/** A filled shape. `pos` is the top left of the shape. */
-function shape(c: Ctx, layer: number, a: number, b: number, drawing: string, pos: Pos, fill: string, opacity: number, extra = '', move?: { to: Pos }) {
-  const place = move ? `\\move(${n1(pos.x)},${n1(pos.y)},${n1(move.to.x)},${n1(move.to.y)})` : `\\pos(${n1(pos.x)},${n1(pos.y)})`;
-  dialogue(c, layer, a, b, `{\\an7${place}\\bord0\\shad0\\1c${assColor(fill)}\\1a${assAlpha(opacity)}${extra}\\p1}${drawing}{\\p0}`);
+/** A shape. `pos` is the top left of the shape. */
+function shape(c: Ctx, layer: number, a: number, b: number, drawing: string, pos: Pos, fill: string, opacity: number, opts: { stroke?: { width: number; color: string }; move?: { to: Pos } } = {}) {
+  if (b - a < 10) return;
+  c.items.push({
+    k: 's', l: layer, a, b, x: n1(pos.x), y: n1(pos.y), d: drawing, c: fill, o: opacity,
+    ...(opts.move ? { mx: n1(opts.move.to.x), my: n1(opts.move.to.y) } : {}),
+    ...(opts.stroke ? { sw: n1(opts.stroke.width), sc: opts.stroke.color } : {}),
+  });
 }
 
 /** Text. `pos` is the top left / top centre / top right depending on the anchor. */
 function label(c: Ctx, layer: number, a: number, b: number, text: string, pos: Pos, size: number, color: string, opts: { bold?: boolean; anchor?: Anchor; spacing?: number; move?: { to: Pos } } = {}) {
-  const place = opts.move ? `\\move(${n1(pos.x)},${n1(pos.y)},${n1(opts.move.to.x)},${n1(opts.move.to.y)})` : `\\pos(${n1(pos.x)},${n1(pos.y)})`;
-  dialogue(c, layer, a, b,
-    `{\\an${opts.anchor ?? 7}${place}\\fn${c.font}\\fs${n1(size * c.k)}\\b${opts.bold ? 1 : 0}\\fsp${opts.spacing ?? 0}\\bord0\\shad0\\1c${assColor(color)}}${assText(text)}`);
+  if (b - a < 10) return;
+  c.items.push({
+    k: 't', l: layer, a, b, x: n1(pos.x), y: n1(pos.y), s: assText(text), z: n1(size * c.k), w: opts.bold ? 1 : 0, an: opts.anchor ?? 7, c: color, sp: opts.spacing ?? 0,
+    ...(opts.move ? { mx: n1(opts.move.to.x), my: n1(opts.move.to.y) } : {}),
+  });
 }
 
 // --- time segments --------------------------------------------------------------------------------------------
@@ -245,29 +290,30 @@ function players(c: Ctx, seg: Seg, map: CourtMap, names: string[], colorOf: (p: 
     const b = nextT ? place(nextT.u, nextT.v) : a;
     const mv = nextT && !nextT.lost ? true : false;
     // ring (outline only)
-    shape(c, 20, seg.start, seg.end, ellipse(a.rx, a.rx * 0.34), { x: a.foot.x - a.rx, y: a.foot.y - a.rx * 0.34 }, color, 0, `\\1a&HFF&\\bord${n1(2.5 * k)}\\3c${assColor(color)}`,
-      mv ? { to: { x: b.foot.x - b.rx, y: b.foot.y - b.rx * 0.34 } } : undefined);
+    shape(c, 20, seg.start, seg.end, ellipse(a.rx, a.rx * 0.34), { x: a.foot.x - a.rx, y: a.foot.y - a.rx * 0.34 }, color, 0,
+      { stroke: { width: 2.5 * k, color }, move: mv ? { to: { x: b.foot.x - b.rx, y: b.foot.y - b.rx * 0.34 } } : undefined });
     // name tag
     const name = names[p] ?? '';
     const tw = (name.length * 5.8 + 18) * k;
     const th = 22 * k;
     const topA = { x: a.foot.x - tw / 2, y: a.foot.y - a.rx * 2.6 - 24 * k };
     const topB = { x: b.foot.x - tw / 2, y: b.foot.y - b.rx * 2.6 - 24 * k };
-    shape(c, 21, seg.start, seg.end, roundRect(tw, th, 6 * k), topA, BACK, 0.85, '', mv ? { to: topB } : undefined);
-    shape(c, 22, seg.start, seg.end, `m 0 0 l ${n1(4 * k)} 0 l ${n1(4 * k)} ${n1(th)} l 0 ${n1(th)}`, topA, color, 1, '', mv ? { to: topB } : undefined);
+    shape(c, 21, seg.start, seg.end, roundRect(tw, th, 6 * k), topA, BACK, 0.85, { move: mv ? { to: topB } : undefined });
+    shape(c, 22, seg.start, seg.end, `m 0 0 l ${n1(4 * k)} 0 l ${n1(4 * k)} ${n1(th)} l 0 ${n1(th)}`, topA, color, 1, { move: mv ? { to: topB } : undefined });
     label(c, 23, seg.start, seg.end, name, { x: topA.x + tw / 2 + 2 * k, y: topA.y + 3 * k }, 12, '#FFFFFF', { bold: true, anchor: 8, move: mv ? { to: { x: topB.x + tw / 2 + 2 * k, y: topB.y + 3 * k } } : undefined });
   }
 }
 
 // --- entry point ----------------------------------------------------------------------------------------------
 
-export function buildAss(input: AssInput): string {
+/** Everything to draw, in a 1920 wide space, from the overlay saved while recording. */
+export function buildScene(input: AssInput): Scene {
   const { config, rallies, overlay, durationMs } = input;
   const resX = 1920;
   const resY = Math.round(resX / overlay.frameAspect);
   const k = resX / DESIGN_W;
   const canvasH = DESIGN_W / overlay.frameAspect;
-  const c: Ctx = { k, font: input.fontName ?? 'Arial', lines: [] };
+  const c: Ctx = { k, items: [] };
   const names = [...config.players.A, ...config.players.B];
   const nNear = config.players.A.length;
   const colorOf = (p: number) => (p < nNear ? NEAR[p] : FAR[p - nNear]);
@@ -293,22 +339,40 @@ export function buildAss(input: AssInput): string {
     mapDots(c, seg.snap, colorOf, seg.start, seg.end);
     players(c, seg, map, names, colorOf);
   }
+  return { width: resX, height: resY, items: c.items };
+}
 
+/** Writes a scene as an ASS subtitle file. */
+export function sceneToAss(scene: Scene, fontName = 'Arial'): string {
+  const lines: string[] = [];
+  for (const it of scene.items) {
+    const place = it.mx !== undefined && it.my !== undefined ? `\\move(${it.x},${it.y},${it.mx},${it.my})` : `\\pos(${it.x},${it.y})`;
+    let text: string;
+    if (it.k === 's') {
+      const stroke = it.sw ? `\\bord${it.sw}\\3c${assColor(it.sc ?? it.c)}` : '\\bord0';
+      text = `{\\an7${place}${stroke}\\shad0\\1c${assColor(it.c)}\\1a${assAlpha(it.o)}\\p1}${it.d}{\\p0}`;
+    } else {
+      text = `{\\an${it.an}${place}\\fn${fontName}\\fs${it.z}\\b${it.w}\\fsp${it.sp}\\bord0\\shad0\\1c${assColor(it.c)}}${it.s}`;
+    }
+    lines.push(`Dialogue: ${it.l},${assTime(it.a)},${assTime(it.b)},Default,,0,0,0,,${text}`);
+  }
   const header = [
     '[Script Info]',
     'Title: RallyCam overlay',
     'ScriptType: v4.00+',
-    `PlayResX: ${resX}`,
-    `PlayResY: ${resY}`,
+    `PlayResX: ${scene.width}`,
+    `PlayResY: ${scene.height}`,
     'WrapStyle: 2',
     'ScaledBorderAndShadow: yes',
     '',
     '[V4+ Styles]',
     'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    `Style: Default,${c.font},${n1(14 * k)},&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1`,
+    `Style: Default,${fontName},27,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1`,
     '',
     '[Events]',
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
-  return [...header, ...c.lines].join('\n') + '\n';
+  return [...header, ...lines].join('\n') + '\n';
 }
+
+export const buildAss = (input: AssInput): string => sceneToAss(buildScene(input), input.fontName);
