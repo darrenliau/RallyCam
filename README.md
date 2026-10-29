@@ -4,10 +4,11 @@ Badminton match recorder and tracker. React Native (Expo SDK 58, TypeScript, Exp
 
 ## What works now
 - **Match setup:** singles or doubles and player names. One game per recording: it stops by itself when someone wins (21, win by 2, cap 30). The engine still supports best of 3.
-- **Recording:** landscape, asks the camera for 120 fps with stabilisation off (react-native-vision-camera), screen kept awake, video saved with the match. The chip on the Record screen shows the frame rate the phone actually gave. Below 60 fps it warns you.
+- **Recording:** starts when you lock the court (a venue with a saved court starts straight away), landscape, asks the camera for 120 fps with stabilisation off (react-native-vision-camera), screen kept awake, video saved with the match. The chip on the Record screen shows the frame rate the phone actually gave. Below 60 fps it warns you.
 - **Scoring engine** (`src/engine`): pure TypeScript, unit tested. 21 points, win by 2, cap at 30, serve court and doubles court swapping, undo, fix any earlier point and re-score.
 - **Storage:** local SQLite (`src/db`). Matches and rallies. Nothing leaves the phone.
 - **Venues:** name a venue on the New match screen. The court alignment you lock during a match is saved to it, so the next match there starts already aligned. Saved as fractions of the screen, so it survives restarts. If you open it on a phone with a different screen shape, the app asks you to check the dots again.
+- **Shuttle speed and shot count cards:** show dashes ("needs shuttle tracking") until a shuttle tracker exists. In debug builds, "Simulate players" also feeds made-up values so you can see the layout.
 - **Court alignment and player tags:** drag four corners onto the court, then each tracked player gets a ring, a name tag (tap two tags to swap), a distance total and a court-map dot. Needs a tracker to feed it (see below).
 - **Review:** video, score chart per game, every point, change who won a point.
 

@@ -10,10 +10,11 @@ import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Co
 import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
 import { roiFromCorners } from '../analysis/preprocess';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
+import { SimulatedShuttle, type ShuttleStats } from '../analysis/shuttle';
 import { DetectorPlayerTracker } from '../analysis/tracker';
 import { CourtAligner } from '../components/CourtAligner';
 import { PlayerOverlay, type TagInfo } from '../components/PlayerOverlay';
-import { CourtMapCard, DistanceCard } from '../components/StatCards';
+import { CourtMapCard, DistanceCard, ShuttleCards } from '../components/StatCards';
 import { RecorderView, isExpoGo } from '../camera/RecorderView';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
@@ -93,6 +94,8 @@ export default function Record() {
   const meter = useRef(new DistanceMeter()).current;
   const simulator = useRef<SimulatedTracker | null>(null);
   const [simulating, setSimulating] = useState(false);
+  const [shuttle, setShuttle] = useState<ShuttleStats | null>(null);
+  const shuttleSim = useRef<SimulatedShuttle | null>(null);
 
   const colorOf = (player: number) => (player < nNear ? colors.near[player] : colors.far[player - nNear]);
   const tagFor = useCallback((id: number): TagInfo => {
@@ -109,15 +112,21 @@ export default function Record() {
     if (simulator.current) {
       simulator.current.stop();
       simulator.current = null;
+      shuttleSim.current?.stop();
+      shuttleSim.current = null;
       setSimulating(false);
       setTracks([]);
+      setShuttle(null);
     } else {
       simulator.current = new SimulatedTracker(nNear, names.length - nNear);
       simulator.current.start(onTracks);
+      shuttleSim.current = new SimulatedShuttle(names);
+      shuttleSim.current.start(setShuttle);
       setSimulating(true);
     }
   };
-  useEffect(() => () => simulator.current?.stop(), []);
+  useEffect(() => () => { simulator.current?.stop(); shuttleSim.current?.stop(); }, []);
+  useEffect(() => { shuttleSim.current?.newRally(); }, [state.rallies.length]);
 
   // Real tracking: the camera finds people in the court region and hands them to the tracker.
   const bridge = useRef(new DetectionBridge()).current;
@@ -174,12 +183,17 @@ export default function Record() {
     return () => clearInterval(id);
   }, []);
 
-  const onReady = useCallback(() => {
-    if (recordingStarted.current) return;
+  // Recording starts only once the camera is ready and the court is locked (a saved venue court counts as locked).
+  const [cameraReady, setCameraReady] = useState(false);
+  const [recording, setRecording] = useState(false);
+  const onReady = useCallback(() => setCameraReady(true), []);
+  useEffect(() => {
+    if (!cameraReady || aligning || !venueLoaded || recordingStarted.current) return;
     recordingStarted.current = true;
     startedAt.current = Date.now();
+    setRecording(true);
     recorder.current?.start().catch((e: Error) => setRecError(e.message));
-  }, []);
+  }, [cameraReady, aligning, venueLoaded]);
 
   const persist = useCallback(async (next: MatchState) => {
     setState(next);
@@ -188,6 +202,7 @@ export default function Record() {
 
   /** Called by the analysis source in Phase 2. Until then only the dev buttons call it. */
   const onPoint = useCallback((winner: Side) => {
+    if (!recordingStarted.current) return;
     const now = Date.now() - startedAt.current;
     const next = addRally(state, { winner, startMs: lastEnd.current, endMs: now, source: 'manual' });
     lastEnd.current = now;
@@ -200,11 +215,12 @@ export default function Record() {
   const endingRef = useRef(false);
   const endMatch = async () => {
     if (endingRef.current) return;
+    if (!recordingStarted.current && state.rallies.length === 0) { router.back(); return; } // nothing was recorded
     endingRef.current = true;
     setEnding(true);
     const uri = await recorder.current?.stop().catch(() => undefined);
     const id = await getMatchId();
-    await finishMatch(id, uri ?? null, Date.now() - startedAt.current);
+    await finishMatch(id, uri ?? null, startedAt.current ? Date.now() - startedAt.current : 0);
     router.replace(`/match/${id}`);
   };
 
@@ -255,8 +271,8 @@ export default function Record() {
 
       <View style={[s.chipRow, { left: L, top: T }]} pointerEvents="box-none">
         <View style={s.chip}>
-          <View style={s.dot} />
-          <Text style={s.chipText}>{recError ? 'Not recording' : formatClock(elapsed)}</Text>
+          <View style={[s.dot, !recording && { backgroundColor: colors.muted }]} />
+          <Text style={s.chipText}>{recError ? 'Not recording' : recording ? formatClock(elapsed) : 'Not recording yet'}</Text>
         </View>
         <View style={s.chip}>
           <Text style={[s.chipText, lowFps && { color: colors.amber }]}>
@@ -281,24 +297,30 @@ export default function Record() {
         </Text>
       )}
 
-      {__DEV__ && (
-        <View style={[s.dev, { top: T, right: R }]}>
+      {!aligning && (
+        <View style={{ position: 'absolute', top: T, right: R }} pointerEvents="none">
+          <ShuttleCards stats={shuttle} />
+        </View>
+      )}
+
+      {__DEV__ && !aligning && (
+        <View style={[s.dev, { bottom: B, left: (width - 210) / 2 }]}>
           <Text style={s.devText}>Dev only. Automatic scoring is not built yet.</Text>
           <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Button kind="ghost" label="Near" onPress={() => onPoint('A')} style={s.devBtn} />
-            <Button kind="ghost" label="Far" onPress={() => onPoint('B')} style={s.devBtn} />
+            <Button kind="ghost" label="Near" onPress={() => onPoint('A')} disabled={!recording} style={s.devBtn} />
+            <Button kind="ghost" label="Far" onPress={() => onPoint('B')} disabled={!recording} style={s.devBtn} />
           </View>
           <Button kind="ghost" label={simulating ? 'Stop simulation' : 'Simulate players'} onPress={toggleSimulation} style={s.devBtn} />
         </View>
       )}
 
-      {!aligning && tracks.length > 0 && (
+      {!aligning && (
         <>
           <View style={{ position: 'absolute', left: L, top: T + 40 }} pointerEvents="none">
             <CourtMapCard tracks={tracks} tagFor={tagFor} />
           </View>
           <View style={{ position: 'absolute', left: L, bottom: B }} pointerEvents="none">
-            <DistanceCard rows={names.map((name, i) => ({ name, color: colorOf(i), metres: meter.metres(i) }))} />
+            <DistanceCard rows={names.map((name, i) => ({ name, color: colorOf(i), metres: isExpoGo && !simulating ? null : meter.metres(i) }))} />
           </View>
         </>
       )}
@@ -306,10 +328,10 @@ export default function Record() {
       {venueLoaded && aligning && (
         <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
           <Text style={s.bannerText}>
-            {staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court, then lock it in. '}
+            {staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
             {venue ? `It is saved for ${venue.name}.` : ''}
           </Text>
-          <Button label="Lock court" onPress={lockCourt} />
+          <Button label={recording ? 'Lock court' : 'Lock court and start recording'} onPress={lockCourt} />
         </View>
       )}
 
