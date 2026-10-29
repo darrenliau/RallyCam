@@ -39,7 +39,7 @@ npx expo start      # scan the QR code with a development build
 Camera recording works on a real phone, not in a simulator or on the web. Expo Go is fine for now. Once native modules such as vision-camera are added you need a development build (`eas build --profile development`).
 
 ## Before the first store build
-- Change `ios.bundleIdentifier` and `android.package` in `app.json` (currently `com.darrenliau.rallycam`).
+- Bundle ID and Android package are `com.darrenliau.rallycam` (`app.json`). Apple ties the ID to your account once registered.
 - Add the app icon and splash.
 - Apple Developer ($99/yr) and Google Play ($25 once) accounts, then `npx eas-cli@latest build` and `submit`.
 - Write the privacy policy (video stays on the device).
@@ -87,3 +87,14 @@ npx tsx tools/evaluate-tracking.ts --session s01 --doubles --analysis-fps 15
 ```
 It needs `data/labels/s01_court.json` (the four court corners in video pixels, same file as the Phase 0 labelling spec). The report shows how often all players are seen, gaps, distance moved and possible identity swaps ("jumps"). For positional accuracy, hand-label about 50 frames in `data/labels/s01_players.csv` (`frame,id,x,y`: the player's feet in pixels, id 0 and 1 for the near side left to right, 2 and 3 for the far side) and add `--gt data/labels/s01_players.csv`.
 The Python script has not been run against real weights from the build environment, only syntax-checked.
+
+## Development build with Xcode (free Apple ID, needs a Mac)
+1. Install Xcode from the Mac App Store, then open it once and accept the licence. Install CocoaPods: `brew install cocoapods` (or `sudo gem install cocoapods`).
+2. `git clone https://github.com/darrenliau/RallyCam.git && cd RallyCam && npm install`
+3. `npx expo prebuild --platform ios` creates the `ios` folder (it is generated, and is git-ignored).
+4. `open ios/RallyCam.xcworkspace`
+5. In Xcode: click the RallyCam project, then Signing & Capabilities. Tick "Automatically manage signing", choose your Apple ID as Team (add it under Xcode > Settings > Accounts if it is missing, it appears as "Personal Team").
+6. Plug in the iPhone, trust the computer, turn on Developer Mode (Settings > Privacy & Security), pick the phone at the top of Xcode and press Run.
+7. First launch: Settings > General > VPN & Device Management, trust your developer profile.
+8. `npx expo start --dev-client` and open the app. A free account's install lasts 7 days, then run it again from Xcode.
+If the free team says the bundle ID is unavailable, change `ios.bundleIdentifier` in `app.json` to something unique, then run `npx expo prebuild --platform ios --clean`.
