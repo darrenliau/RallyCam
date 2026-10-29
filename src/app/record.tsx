@@ -28,7 +28,7 @@ import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, QUALITY, mbPerMinute, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
-import { judgeRally, type Verdict } from '../analysis/rallyEnd';
+import { isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
 import { addRally, editRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
 import type { MatchConfig, MatchState, Side } from '../engine/types';
@@ -274,7 +274,9 @@ export default function Record() {
   // A guess at who won the rally, from where the shuttle was last hit and last seen. The player confirms it.
   const [suggestion, setSuggestion] = useState<Verdict | null>(null);
   const judged = useRef(false);
-  const tally = useRef({ shown: 0, agreed: 0, flipped: 0, dismissed: 0 });
+  const tally = useRef({ shown: 0, agreed: 0, flipped: 0, dismissed: 0, notServe: 0 });
+  const serveRef = useRef(state.serve);
+  serveRef.current = state.serve;
   const judgeCtx = useRef({ recording: false, over: false, singles: config.type === 'singles' });
   judgeCtx.current = { recording, over: !!state.matchWinner, singles: config.type === 'singles' };
 
@@ -334,7 +336,22 @@ export default function Record() {
       setShuttle(estimator.stats(now));
       const ctx = judgeCtx.current;
       if (ctx.recording && !ctx.over && !judged.current) {
-        const verdict = judgeRally(estimator.trace(), now, ctx.singles);
+        const trace = estimator.trace();
+        let verdict: Verdict | null = null;
+        if (isRallyOver(trace, now)) {
+          const sv = serveRef.current;
+          const sideNames = sv.side === 'A' ? config.players.A : config.players.B;
+          const playerIdx = (sv.side === 'A' ? 0 : config.players.A.length) + sv.playerIndex;
+          const serverTrack = latest.current.tracks.find((x) => !x.lost && (assignRef.current[x.id] ?? x.id) === playerIdx);
+          const problem = sideNames.length ? serveProblem(trace, { side: sv.side, court: sv.court, server: serverTrack ? { u: serverTrack.u, v: serverTrack.v } : undefined }) : null;
+          if (problem) {
+            // Movement that did not start like a serve: a shuttle being picked up, a practice hit. Not a point.
+            tally.current.notServe += 1;
+            estimator.newRally();
+          } else {
+            verdict = judgeRally(trace, now, ctx.singles);
+          }
+        }
         if (verdict) {
           judged.current = true;
           tally.current.shown += 1;
@@ -346,7 +363,7 @@ export default function Record() {
       setTrail(frames.map((p) => frameToScreen(p, geometry())));
       const st = native.getShuttleStatus();
       const t = tally.current;
-      setShuttleDiag(`score guesses: ${t.shown} given, ${t.flipped} swapped by you\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+      setShuttleDiag(`score guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve)\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; };
     // eslint-disable-next-line react-hooks/exhaustive-deps

@@ -1,5 +1,5 @@
 import { COURT_L, COURT_W } from './court';
-import type { Side } from '../engine/types';
+import type { Court, Side } from '../engine/types';
 
 export interface FloorPoint { t: number; u: number; v: number }
 
@@ -10,6 +10,16 @@ export interface RallyTrace {
   lastHit: FloorPoint | null;
   /** The last place the shuttle was seen. */
   lastSeen: FloorPoint | null;
+  /** Where the shuttle was first seen in this rally, which should be the serve. */
+  firstSeen?: FloorPoint | null;
+}
+
+/** Who should be serving, and from where, according to the score. */
+export interface ServeExpectation {
+  side: Side;
+  court: Court;
+  /** Where the server is standing now, if a player is being tracked. */
+  server?: { u: number; v: number };
 }
 
 export interface Verdict {
@@ -61,4 +71,34 @@ export function judgeRally(trace: RallyTrace, now: number, singles: boolean): Ve
   if (trace.shots < 3) confidence -= 0.1;
   const reason = hitterWins ? 'landed in' : !crossed ? 'stayed on hitter\'s side' : 'landed out';
   return { winner: hitterWins ? hitter : other(hitter), confidence: Math.max(0.1, +confidence.toFixed(2)), reason };
+}
+
+/** How far from the server (metres) the shuttle may first appear. Floor positions of a shuttle in the air are rough. */
+const SERVER_REACH_M = 3.5;
+/** Slack on the left/right halves, as a fraction of the court width. */
+const HALF_SLACK = 0.12;
+
+/** True when the shuttle has been gone long enough that the rally is over (or was never one). */
+export function isRallyOver(trace: RallyTrace, now: number): boolean {
+  return !!trace.lastSeen && now - trace.lastSeen.t >= GONE_S;
+}
+
+/**
+ * Checks that the rally began like a serve. A shuttle picked up and tossed back, a practice hit, or a stray shuttle on the
+ * next court all produce movement that is not a rally, and counting them gives phantom points.
+ * Returns why it does not look like a serve, or null if it does.
+ */
+export function serveProblem(trace: RallyTrace, serve: ServeExpectation): string | null {
+  const first = trace.firstSeen;
+  if (!first) return 'no start seen';
+  if (sideOf(first.v) !== serve.side) return 'started on the wrong side';
+  // A near-side server (A) faces away from the camera, so their right is the camera's right. For the far side it is the other way round.
+  const right = serve.side === 'A' ? first.u > 0.5 - HALF_SLACK : first.u < 0.5 + HALF_SLACK;
+  const left = serve.side === 'A' ? first.u < 0.5 + HALF_SLACK : first.u > 0.5 - HALF_SLACK;
+  if (serve.court === 'right' ? !right : !left) return 'started from the wrong court';
+  if (serve.server) {
+    const d = Math.hypot((first.u - serve.server.u) * COURT_W, (first.v - serve.server.v) * COURT_L);
+    if (d > SERVER_REACH_M) return 'started far from the server';
+  }
+  return null;
 }

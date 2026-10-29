@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judgeRally, GONE_S } from './rallyEnd';
+import { judgeRally, serveProblem, isRallyOver, GONE_S } from './rallyEnd';
 
 const P = (t: number, u: number, v: number) => ({ t, u, v });
 const now = (t: number) => t + GONE_S + 0.1;
@@ -36,5 +36,36 @@ describe('judgeRally', () => {
     const sure = judgeRally({ shots: 5, lastHit: P(1, 0.5, 0.8), lastSeen: P(2, 0.5, 0.3) }, now(2), false)!;
     const close = judgeRally({ shots: 5, lastHit: P(1, 0.5, 0.8), lastSeen: P(2, 0.5, 0.02) }, now(2), false)!;
     expect(close.confidence).toBeLessThan(sure.confidence);
+  });
+});
+
+describe('serveProblem', () => {
+  const trace = (u: number, v: number) => ({ shots: 3, lastHit: P(2, 0.5, 0.2), lastSeen: P(3, 0.5, 0.8), firstSeen: P(1, u, v) });
+  it('accepts a serve from the expected side and court', () => {
+    // near side server, right court = right half of the picture
+    expect(serveProblem(trace(0.7, 0.8), { side: 'A', court: 'right' })).toBeNull();
+    expect(serveProblem(trace(0.3, 0.8), { side: 'A', court: 'left' })).toBeNull();
+  });
+  it('rejects movement that starts on the other side', () => {
+    expect(serveProblem(trace(0.7, 0.2), { side: 'A', court: 'right' })).not.toBeNull();
+  });
+  it('rejects a start from the wrong court', () => {
+    expect(serveProblem(trace(0.2, 0.8), { side: 'A', court: 'right' })).not.toBeNull();
+  });
+  it('mirrors left and right for the far side', () => {
+    expect(serveProblem(trace(0.3, 0.2), { side: 'B', court: 'right' })).toBeNull();
+    expect(serveProblem(trace(0.7, 0.2), { side: 'B', court: 'right' })).not.toBeNull();
+  });
+  it('rejects a start far from the server when the server is known', () => {
+    expect(serveProblem(trace(0.7, 0.8), { side: 'A', court: 'right', server: { u: 0.1, v: 0.9 } })).not.toBeNull();
+    expect(serveProblem(trace(0.7, 0.8), { side: 'A', court: 'right', server: { u: 0.65, v: 0.82 } })).toBeNull();
+  });
+  it('has nothing to judge before a start is seen', () => {
+    expect(serveProblem({ shots: 0, lastHit: null, lastSeen: null }, { side: 'A', court: 'right' })).not.toBeNull();
+  });
+  it('knows when a rally is over', () => {
+    const t = trace(0.7, 0.8);
+    expect(isRallyOver(t, 3.5)).toBe(false);
+    expect(isRallyOver(t, 3 + GONE_S + 0.1)).toBe(true);
   });
 });

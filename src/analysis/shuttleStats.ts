@@ -32,6 +32,7 @@ export class ShuttleEstimator {
   private seen = false;
   private recent: ShuttleSample[] = [];
   private hit: FloorPoint | null = null;
+  private first: FloorPoint | null = null;
 
   /** `toFloor` maps a frame position to court coordinates (0..1 across and along the court). */
   constructor(private toFloor: (x: number, y: number) => { u: number; v: number }) {}
@@ -45,6 +46,7 @@ export class ShuttleEstimator {
     this.last = null;
     this.seen = false;
     this.hit = null;
+    this.first = null;
   }
 
   push(s: ShuttleSample) {
@@ -56,7 +58,10 @@ export class ShuttleEstimator {
 
     if (!last || gap > GONE_AFTER_S) {
       // a new flight starts. The first one in a rally is the serve.
-      if (!this.seen || this.shots === 0) this.count(s.t, u, v);
+      if (!this.seen || this.shots === 0) {
+        this.count(s.t, u, v);
+        if (!this.first) this.first = { t: s.t, u, v };
+      }
       this.seen = true;
       this.prevVel = null;
       this.last = { ...s, u, v };
@@ -101,7 +106,7 @@ export class ShuttleEstimator {
   /** What happened so far in this rally, for deciding who won it (see rallyEnd.ts). */
   trace(): RallyTrace {
     const l = this.last;
-    return { shots: this.shots, lastHit: this.hit, lastSeen: l ? { t: l.t, u: l.u, v: l.v } : null };
+    return { shots: this.shots, lastHit: this.hit, firstSeen: this.first, lastSeen: l ? { t: l.t, u: l.u, v: l.v } : null };
   }
 
   /** What to show now, or null if the shuttle has not been seen for a while. */
