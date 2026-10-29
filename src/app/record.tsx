@@ -22,7 +22,7 @@ import { Capture } from '../../modules/rallycam-export/src/capture';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
 import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo, setProvisionalVideo } from '../db/matches';
-import { HIDE_EMPTY_SHUTTLE } from '../config';
+import { EXPERIMENTS, HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
@@ -239,7 +239,7 @@ export default function Record() {
   // Dev builds: show which camera is in use and whether the overlay is reaching the video.
   const [diag, setDiag] = useState('');
   useEffect(() => {
-    if (!__DEV__ || aligning) return;
+    if (!EXPERIMENTS || aligning) return;
     const id = setInterval(() => {
       if (usesNativeCapture && Capture) {
         const st = Capture.getStatus();
@@ -576,7 +576,7 @@ export default function Record() {
         </View>
       )}
 
-      {__DEV__ && !aligning && (
+      {EXPERIMENTS && !aligning && (
         <View style={[s.dev, { bottom: B + 64, left: (width - 260) / 2 }]}>
           <Text style={s.devText}>Dev only: test tools</Text>
           {diag !== '' && <Text style={s.devDiag}>{diag}</Text>}

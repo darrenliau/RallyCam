@@ -3,7 +3,8 @@
   "build": {
     "development": { "developmentClient": true, "distribution": "internal", "ios": { "simulator": false } },
     "preview": { "distribution": "internal" },
-    "production": { "autoIncrement": true }
+    "production": { "autoIncrement": true },
+    "testflight": { "extends": "production", "env": { "EXPO_PUBLIC_EXPERIMENTS": "1" } }
   },
-  "submit": { "production": {} }
+  "submit": { "production": {}, "testflight": {} }
 }

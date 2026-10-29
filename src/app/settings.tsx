@@ -1,3 +1,4 @@
+import { EXPERIMENTS } from '../config';
 import { router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
@@ -56,6 +57,13 @@ export default function Settings() {
             </View>
             <Switch value={settings.experimentalShuttle} onValueChange={(v) => updateSettings({ experimentalShuttle: v })} accessibilityLabel="Experimental shuttle tracking" />
           </View>
+        </Card>
+      )}
+
+      {EXPERIMENTS && (
+        <Card style={{ gap: 4 }}>
+          <Label>Test build</Label>
+          <Text style={s.muted}>Experimental features are on in this build: the debug panel and "Simulate players" on the Record screen, shuttle speed and shot cards, and the shuttle log on the Review screen. Please send feedback from TestFlight.</Text>
         </Card>
       )}
 
