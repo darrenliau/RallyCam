@@ -64,6 +64,20 @@ final class CaptureController: NSObject {
   private let overlayLock = NSLock()
   private var overlayImage: CIImage?
 
+  // Shuttle tracking (experimental): looks for small fast-moving things in the court area, see ShuttleTracker.swift
+  private let shuttleQueue = DispatchQueue(label: "rallycam.capture.shuttle", qos: .userInitiated)
+  private let shuttleTracker = MotionShuttleTracker()
+  private let shuttleLock = NSLock()
+  private var shuttleROI: CGRect?          // fractions of the frame, top left origin
+  private var shuttleBusy = false
+  private var shuttleFrame = 0
+  private var lastShuttleEmit = 0.0
+  private var shuttleLog: FileHandle?
+  private var shuttleLogBuffer = ""
+  private var lastLogFlush = 0.0
+  private var shuttleStats = (frames: 0, withCandidates: 0, confirmed: 0, shaky: 0, lastCandidates: 0)
+  var onShuttle: (([String: Any]) -> Void)?
+
   // Detection
   private let detectLock = NSLock()
   private var detectionROI: CGRect?   // fractions of the frame, top left origin
@@ -422,6 +436,136 @@ final class CaptureController: NSObject {
     }
   }
 
+  // MARK: shuttle
+
+  /// `roi` is the area to watch for the shuttle, as fractions of the frame. Pass nil to turn it off.
+  func setShuttle(roi: CGRect?) {
+    shuttleLock.lock()
+    shuttleROI = roi
+    shuttleLock.unlock()
+    shuttleQueue.async { self.shuttleTracker.reset() }
+  }
+
+  /// Starts writing one line per analysed frame (candidates and track) to a CSV file, for studying the tracker on a computer.
+  func startShuttleLog(url: URL) {
+    shuttleQueue.async {
+      self.shuttleLog?.closeFile()
+      FileManager.default.createFile(atPath: url.path, contents: nil)
+      self.shuttleLog = try? FileHandle(forWritingTo: url)
+      self.shuttleLogBuffer = "t,frameW,frameH,activeFraction,shaky,candidates,c1x,c1y,c1area,c2x,c2y,c2area,c3x,c3y,c3area,confirmed,tx,ty,tvx,tvy\n"
+      self.lastLogFlush = 0
+    }
+  }
+
+  func stopShuttleLog() {
+    shuttleQueue.async {
+      if let log = self.shuttleLog {
+        log.write(Data(self.shuttleLogBuffer.utf8))
+        log.closeFile()
+      }
+      self.shuttleLog = nil
+      self.shuttleLogBuffer = ""
+    }
+  }
+
+  func shuttleStatus() -> [String: Any] {
+    statsLock.lock()
+    defer { statsLock.unlock() }
+    return [
+      "shuttleFrames": shuttleStats.frames,
+      "shuttleWithCandidates": shuttleStats.withCandidates,
+      "shuttleConfirmed": shuttleStats.confirmed,
+      "shuttleShaky": shuttleStats.shaky,
+      "shuttleLastCandidates": shuttleStats.lastCandidates,
+    ]
+  }
+
+  /// Runs the shuttle tracker on about every second camera frame, off the camera's own queue.
+  private func shuttleIfDue(_ pixelBuffer: CVPixelBuffer, time: CMTime) {
+    shuttleFrame += 1
+    guard shuttleFrame % 2 == 0 else { return }
+    shuttleLock.lock()
+    let roi = shuttleROI
+    let due = roi != nil && !shuttleBusy
+    if due { shuttleBusy = true }
+    shuttleLock.unlock()
+    guard due, let roi else { return }
+
+    let t = CMTimeGetSeconds(time)
+    shuttleQueue.async {
+      defer {
+        self.shuttleLock.lock()
+        self.shuttleBusy = false
+        self.shuttleLock.unlock()
+      }
+      CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+      defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+      guard CVPixelBufferGetPlaneCount(pixelBuffer) > 0, let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { return }
+      let fw = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+      let fh = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+      let stride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+      let x0 = max(0, min(fw - 16, Int(roi.minX * CGFloat(fw))))
+      let y0 = max(0, min(fh - 16, Int(roi.minY * CGFloat(fh))))
+      let w = max(16, min(fw - x0, Int(roi.width * CGFloat(fw))))
+      let h = max(16, min(fh - y0, Int(roi.height * CGFloat(fh))))
+
+      let result = self.shuttleTracker.update(plane: base.assumingMemoryBound(to: UInt8.self), stride: stride, x0: x0, y0: y0, w: w, h: h, t: t)
+      self.bump {
+        self.shuttleStats.frames += 1
+        if !result.candidates.isEmpty { self.shuttleStats.withCandidates += 1 }
+        if result.track?.confirmed == true && result.track?.misses == 0 { self.shuttleStats.confirmed += 1 }
+        if result.shaky { self.shuttleStats.shaky += 1 }
+        self.shuttleStats.lastCandidates = result.candidates.count
+      }
+      self.writeShuttleLog(result, t: t, frame: (fw, fh), origin: (x0, y0))
+
+      // tell JavaScript about the track at most 30 times a second
+      if t - self.lastShuttleEmit >= 1.0 / 30, let onShuttle = self.onShuttle {
+        self.lastShuttleEmit = t
+        var payload: [String: Any] = [
+          "t": t,
+          "candidates": result.candidates.count,
+          "shaky": result.shaky,
+        ]
+        if let tr = result.track, tr.confirmed {
+          // frame fractions, and fractions per second
+          payload["x"] = (Double(x0) + tr.x) / Double(fw)
+          payload["y"] = (Double(y0) + tr.y) / Double(fh)
+          payload["vx"] = tr.vx / Double(fw)
+          payload["vy"] = tr.vy / Double(fh)
+          payload["misses"] = tr.misses
+          payload["tTrack"] = tr.t
+        }
+        onShuttle(payload)
+      }
+    }
+  }
+
+  private func writeShuttleLog(_ r: ShuttleResult, t: Double, frame: (Int, Int), origin: (Int, Int)) {
+    guard shuttleLog != nil else { return }
+    func f(_ v: Double) -> String { String(format: "%.1f", v) }
+    var cols = ["\(String(format: "%.4f", t))", "\(frame.0)", "\(frame.1)", String(format: "%.5f", r.activeFraction), r.shaky ? "1" : "0", "\(r.candidates.count)"]
+    for i in 0..<3 {
+      if i < r.candidates.count {
+        let c = r.candidates[i]
+        cols += [f(c.x + Double(origin.0)), f(c.y + Double(origin.1)), "\(c.area)"]
+      } else {
+        cols += ["", "", ""]
+      }
+    }
+    if let tr = r.track, tr.confirmed {
+      cols += ["1", f(tr.x + Double(origin.0)), f(tr.y + Double(origin.1)), f(tr.vx), f(tr.vy)]
+    } else {
+      cols += ["0", "", "", "", ""]
+    }
+    shuttleLogBuffer += cols.joined(separator: ",") + "\n"
+    if t - lastLogFlush >= 1 {
+      lastLogFlush = t
+      shuttleLog?.write(Data(shuttleLogBuffer.utf8))
+      shuttleLogBuffer = ""
+    }
+  }
+
   // MARK: recording
 
   func startRecording(url: URL, outputFps: Double, width: Int, height: Int, bitRate: Int) {
@@ -642,6 +786,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
     }
 
     detectIfDue(pixelBuffer)
+    shuttleIfDue(pixelBuffer, time: pts)
 
     if state == .armed {
       openWriter(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer), firstTime: pts)

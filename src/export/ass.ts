@@ -360,6 +360,8 @@ export interface LiveInput {
   corners: OverlayData['corners'];
   frameAspect: number;
   hideEmptyShuttle?: boolean;
+  /** The shuttle's last positions, oldest first, as fractions of the video frame. */
+  trail?: { x: number; y: number }[];
 }
 
 /**
@@ -386,6 +388,12 @@ export function buildLiveScene(input: LiveInput): Scene {
     mapDots(c, snapshot, colorOf, 0, LIVE_END);
     players(c, { start: 0, end: LIVE_END, snap: snapshot }, map, names, colorOf);
   }
+  // The shuttle's recent path, newest dot biggest
+  (input.trail ?? []).forEach((p, i, all) => {
+    const age = (i + 1) / all.length; // 1 for the newest
+    const r = (2 + 4 * age) * k;
+    shape(c, 30, 0, LIVE_END, ellipse(r, r), { x: p.x * resX - r, y: p.y * resY - r }, '#FFD166', 0.25 + 0.7 * age);
+  });
   return { width: resX, height: resY, items: c.items };
 }
 

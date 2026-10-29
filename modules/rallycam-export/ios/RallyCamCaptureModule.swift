@@ -29,7 +29,7 @@ public class RallyCamCaptureModule: Module {
   public func definition() -> ModuleDefinition {
     Name("RallyCamCapture")
 
-    Events("onDetections", "onError", "onInterruption", "onPressure")
+    Events("onDetections", "onError", "onInterruption", "onPressure", "onShuttle")
 
     OnCreate {
       let controller = CaptureController.shared
@@ -41,6 +41,9 @@ public class RallyCamCaptureModule: Module {
       }
       controller.onInterruption = { [weak self] interrupted, reason in
         DispatchQueue.main.async { self?.sendEvent("onInterruption", ["interrupted": interrupted, "reason": reason]) }
+      }
+      controller.onShuttle = { [weak self] payload in
+        DispatchQueue.main.async { self?.sendEvent("onShuttle", payload) }
       }
       controller.onPressure = { [weak self] level in
         DispatchQueue.main.async { self?.sendEvent("onPressure", ["level": level]) }
@@ -88,6 +91,24 @@ public class RallyCamCaptureModule: Module {
     // Counters for the on-screen diagnostics: pushes, decoded, failed, framesWritten, framesWithOverlay, lastProblem.
     Function("getStatus") { () -> [String: Any] in
       CaptureController.shared.status()
+    }
+
+    // Experimental shuttle tracking. The area is as fractions of the frame. enabled false turns it off.
+    Function("setShuttle") { (enabled: Bool, x: Double, y: Double, w: Double, h: Double) in
+      CaptureController.shared.setShuttle(roi: enabled ? CGRect(x: x, y: y, width: w, height: h) : nil)
+    }
+
+    Function("startShuttleLog") { (uri: String) in
+      let url = URL(string: uri).flatMap { $0.scheme != nil ? $0 : nil } ?? URL(fileURLWithPath: uri)
+      CaptureController.shared.startShuttleLog(url: url)
+    }
+
+    Function("stopShuttleLog") {
+      CaptureController.shared.stopShuttleLog()
+    }
+
+    Function("getShuttleStatus") { () -> [String: Any] in
+      CaptureController.shared.shuttleStatus()
     }
 
     // Court area to look for people in, as fractions of the frame. enabled false turns detection off.

@@ -75,3 +75,15 @@ export function newGameVideoFile(extension = 'mp4'): File {
   if (!dir.exists) dir.create();
   return new File(dir, `game-${Date.now()}.${extension}`);
 }
+
+/** A new CSV file next to the game videos, for the shuttle tracker's log. */
+export function newShuttleLogFile(): File {
+  const dir = new Directory(Paths.document, 'games');
+  if (!dir.exists) dir.create();
+  return new File(dir, `game-${Date.now()}.shuttle.csv`);
+}
+
+/** Where the shuttle log of a finished game is kept. */
+export function shuttleLogUriFor(matchId: string): string {
+  return new File(new Directory(Paths.document, 'games'), `${matchId}.shuttle.csv`).uri;
+}

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { courtMap, defaultCorners } from './court';
-import { cropResizeRgb, decodeDetections, rgbLayoutFor, roiFromCorners, screenToFrame } from './preprocess';
+import { cropResizeRgb, decodeDetections, frameToScreen, rgbLayoutFor, roiFromCorners, screenToFrame, shuttleRoiFromCorners } from './preprocess';
 import { footToScreen, type FrameGeometry } from './tracker';
 
 const g: FrameGeometry = { frameAspect: 16 / 9, screenW: 900, screenH: 400 };
@@ -89,5 +89,21 @@ describe('decodeDetections', () => {
     const back = map.toCourt(footToScreen(d[0], g2));
     expect(back.u).toBeCloseTo(0.5, 6);
     expect(back.v).toBeCloseTo(0.8, 6);
+  });
+});
+
+describe('frameToScreen and the shuttle area', () => {
+  it('is the inverse of screenToFrame', () => {
+    const p = frameToScreen(screenToFrame({ x: 123, y: 77 }, g), g);
+    expect(p.x).toBeCloseTo(123, 6);
+    expect(p.y).toBeCloseTo(77, 6);
+  });
+  it('watches more of the space above the court than the player area does', () => {
+    const c = defaultCorners(900, 400);
+    const players = roiFromCorners(c, g);
+    const shuttle = shuttleRoiFromCorners(c, g);
+    expect(shuttle.y).toBeLessThanOrEqual(players.y);
+    expect(shuttle.y + shuttle.h).toBeLessThanOrEqual(1);
+    expect(shuttle.h).toBeGreaterThan(players.h * 0.8);
   });
 });

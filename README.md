@@ -139,3 +139,17 @@ Today the overlay is drawn over the video by the app. To bake it into an exporte
 - Generate ASS subtitles from the overlay data (score, speed and shot text are plain text, the court map can be vector drawings) and burn them in with an ffmpeg build that includes libass. ffmpeg-kit was retired upstream, so this needs a maintained fork.
 - AVFoundation (iOS) and MediaCodec/OpenGL (Android) native modules that draw the overlay while re-encoding.
 Any of these needs a development build and a re-encode, which takes time and quality on a 120 fps clip. Decide what resolution and frame rate the exported file should have first.
+
+
+## Settings, guide and recovery
+
+- **Settings** (from the Games tab): video quality (Standard / High / Best, with MB per minute and free space shown), delete saved videos, replay the first-run guide, and the experimental shuttle switch.
+- **First-run guide:** shown once, reopenable from Settings.
+- **Recovery:** games cut off by a call, crash or full storage are finished at the next app start from the points and video already saved. Empty games are removed.
+
+## Experimental shuttle tracker
+
+Settings > Shuttle tracking (experimental). iPhone native camera only. The camera looks for small fast-moving blobs inside the court area (`ShuttleTracker.swift`), and `src/analysis/shuttleMotion.ts` / `shuttleStats.ts` turn them into a rough speed and shot count. Accuracy is unknown and needs tuning on a real court.
+
+- The Record screen debug line shows frames seen, candidates, tracked and shaky counts.
+- While recording, a CSV log of what the tracker saw is saved next to the game. On the Review screen, use the shuttle log card to share it for study on a computer.

@@ -14,7 +14,7 @@ import { MatchOverlay } from '../../components/MatchOverlay';
 import { buildAss } from '../../export/ass';
 import { cancelExport, canExportOnDevice, exportVideoWithOverlay } from '../../export/nativeExport';
 import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFiles';
-import { extensionOf, fileBytes, formatBytes, keepFile, removeFile } from '../../export/storage';
+import { extensionOf, fileBytes, fileExists, formatBytes, keepFile, removeFile, shuttleLogUriFor } from '../../export/storage';
 import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
 import { HIDE_EMPTY_SHUTTLE } from '../../config';
@@ -245,6 +245,13 @@ export default function MatchReview() {
           </Card>
         );
       })}
+      {fileExists(shuttleLogUriFor(match.id)) && (
+        <Card style={{ gap: 6 }}>
+          <Label>Shuttle tracker log</Label>
+          <Text style={s.muted}>What the experimental shuttle tracker saw in this game, one line per frame. Send it to a computer to study how well it worked.</Text>
+          <Button kind="ghost" label="Share log (CSV)" onPress={() => Sharing.shareAsync(shuttleLogUriFor(match.id), { mimeType: 'text/csv', dialogTitle: 'Shuttle tracker log' }).catch(() => {})} />
+        </Card>
+      )}
       {videoBytes > 0 && (
         <Card style={{ gap: 6 }}>
           <Label>Video file</Label>

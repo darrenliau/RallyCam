@@ -9,9 +9,10 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
 import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
 import { cornersToFrame, type OverlaySnapshot } from '../analysis/overlay';
-import { roiFromCorners } from '../analysis/preprocess';
+import { frameToScreen, roiFromCorners, shuttleRoiFromCorners } from '../analysis/preprocess';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
 import { SimulatedShuttle, type ShuttleStats } from '../analysis/shuttle';
+import { ShuttleEstimator } from '../analysis/shuttleStats';
 import { DetectorPlayerTracker } from '../analysis/tracker';
 import { CourtAligner } from '../components/CourtAligner';
 import { MatchOverlay } from '../components/MatchOverlay';
@@ -24,7 +25,7 @@ import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo, se
 import { HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
-import { extensionOf, formatBytes, freeSpaceBytes, keepFile } from '../export/storage';
+import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, QUALITY, mbPerMinute, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { addRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
@@ -254,6 +255,22 @@ export default function Record() {
     return () => clearInterval(id);
   }, [aligning]);
 
+  // --- Experimental shuttle tracking (Settings): the camera looks for small fast things, the estimator turns that into numbers ---
+  const shuttleOn = settings.experimentalShuttle && usesNativeCapture && !footage;
+  const geometry = () => ({ frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height });
+  const estimator = useMemo(
+    () => new ShuttleEstimator((x, y) => {
+      // The shuttle is in the air, so this is only a rough floor position (see ShuttleEstimator)
+      const c = mapRef.current.toCourt(frameToScreen({ x, y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }));
+      return { u: c.u, v: c.v };
+    }),
+    [],
+  );
+  const lastShuttleT = useRef(0);
+  const trailFrame = useRef<{ x: number; y: number }[]>([]);
+  const [trail, setTrail] = useState<{ x: number; y: number }[]>([]);
+  const [shuttleDiag, setShuttleDiag] = useState('');
+
   // Cameras that draw the overlay into the video while recording get a fresh copy of it a few times a second.
   const liveState = useRef(state);
   liveState.current = state;
@@ -281,12 +298,52 @@ export default function Record() {
         corners: cornersToFrame(cornersRef.current, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }),
         frameAspect: FRAME_ASPECT,
         hideEmptyShuttle: HIDE_EMPTY_SHUTTLE,
+        trail: shuttleOn ? trailFrame.current : undefined,
       }));
     };
     push();
     const id = setInterval(push, 250);
     return () => clearInterval(id);
-  }, [recording, names, meter, config, footage]);
+  }, [recording, names, meter, config, footage, shuttleOn]);
+
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !shuttleOn || aligning) return;
+    const r = shuttleRoiFromCorners(corners, geometry());
+    native.setShuttle(true, r.x, r.y, r.w, r.h);
+    return () => native.setShuttle(false, 0, 0, 0, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shuttleOn, aligning, corners, width, height]);
+
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !shuttleOn) return;
+    const sub = native.addListener('onShuttle', (e) => {
+      lastShuttleT.current = e.t;
+      if (e.x != null && e.y != null && (e.misses ?? 0) === 0) estimator.push({ t: e.tTrack ?? e.t, x: e.x, y: e.y });
+    });
+    const id = setInterval(() => {
+      const now = lastShuttleT.current;
+      setShuttle(estimator.stats(now));
+      const frames = estimator.trail(now);
+      trailFrame.current = frames;
+      setTrail(frames.map((p) => frameToScreen(p, geometry())));
+      const st = native.getShuttleStatus();
+      setShuttleDiag(`shuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+    }, 120);
+    return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shuttleOn, estimator]);
+
+  useEffect(() => { estimator.newRally(); }, [state.rallies.length, estimator]);
+
+  // Keep a log of what the tracker saw, for studying it on a computer afterwards
+  const shuttleLogUri = useRef<string | null>(null);
+  useEffect(() => {
+    if (!Capture || !shuttleOn || !recording || shuttleLogUri.current) return;
+    shuttleLogUri.current = newShuttleLogFile().uri;
+    Capture.startShuttleLog(shuttleLogUri.current);
+  }, [shuttleOn, recording]);
 
   const persist = useCallback(async (next: MatchState) => {
     setState(next);
@@ -320,6 +377,11 @@ export default function Record() {
         corners: cornersToFrame(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height }),
         snapshots: snapshots.current,
       });
+    }
+    if (shuttleLogUri.current) {
+      Capture?.stopShuttleLog();
+      keepFile(shuttleLogUri.current, `${id}.shuttle.csv`);
+      shuttleLogUri.current = null;
     }
     const kept = uri ? keepFile(uri, `${id}.${extensionOf(uri)}`) : null;
     await finishMatch(id, kept, startedAt.current ? Date.now() - startedAt.current : 0);
@@ -393,6 +455,7 @@ export default function Record() {
           shuttle={shuttle}
           scoreOnly={aligning}
           hideEmptyShuttle={HIDE_EMPTY_SHUTTLE}
+          trail={shuttleOn ? trail : undefined}
           mapTop={T + 40}
         />
       )}
@@ -447,6 +510,7 @@ export default function Record() {
         <View style={[s.dev, { bottom: B + 64, left: (width - 260) / 2 }]}>
           <Text style={s.devText}>Dev only: test tools</Text>
           {diag !== '' && <Text style={s.devDiag}>{diag}</Text>}
+          {shuttleOn && shuttleDiag !== '' && <Text style={s.devDiag}>{shuttleDiag}</Text>}
           <Button kind="ghost" label={simulating ? 'Stop simulation' : 'Simulate players'} onPress={toggleSimulation} style={s.devBtn} />
         </View>
       )}

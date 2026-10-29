@@ -37,6 +37,33 @@ export function roiFromCorners(c: Corners, g: FrameGeometry): Roi {
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
+/** A point in the camera frame, as a fraction of it, to the screen (the preview crops the frame to fill the screen). */
+export function frameToScreen(p: { x: number; y: number }, g: FrameGeometry): Pt {
+  const scale = Math.max(g.screenW / g.frameAspect, g.screenH);
+  const ox = (g.screenW - g.frameAspect * scale) / 2;
+  const oy = (g.screenH - scale) / 2;
+  return { x: p.x * g.frameAspect * scale + ox, y: p.y * scale + oy };
+}
+
+/**
+ * Where to look for the shuttle: the court area like roiFromCorners, but with much more room above, because the shuttle
+ * flies high over the court.
+ */
+export function shuttleRoiFromCorners(c: Corners, g: FrameGeometry): Roi {
+  const pts = [c.farLeft, c.farRight, c.nearRight, c.nearLeft].map((p) => screenToFrame(p, g));
+  const x0 = Math.min(...pts.map((p) => p.x));
+  const x1 = Math.max(...pts.map((p) => p.x));
+  const y0 = Math.min(...pts.map((p) => p.y));
+  const y1 = Math.max(...pts.map((p) => p.y));
+  const w = x1 - x0;
+  const h = y1 - y0;
+  const left = Math.max(0, x0 - 0.06 * w);
+  const right = Math.min(1, x1 + 0.06 * w);
+  const top = Math.max(0, y0 - 0.9 * h);
+  const bottom = Math.min(1, y1 + 0.05 * h);
+  return { x: left, y: top, w: right - left, h: bottom - top };
+}
+
 export interface RgbLayout { bytesPerPixel: number; r: number; g: number; b: number }
 
 /** Where the red, green and blue bytes sit in a pixel for the frame formats vision-camera can deliver. */
