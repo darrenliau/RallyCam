@@ -1,0 +1,68 @@
+import { File, Paths } from 'expo-file-system';
+import { forwardRef, useEffect, useImperativeHandle } from 'react';
+import { Capture, CapturePreview } from '../../modules/rallycam-export/src/capture';
+import type { RecorderHandle, RecorderProps } from './types';
+
+/** The camera records at this frame rate where the phone can (120 on recent iPhones). */
+const CAPTURE_FPS = 120;
+/** Frames per second written to the saved video. The tracker still sees every frame the camera delivers. */
+const VIDEO_FPS = 60;
+
+/**
+ * iPhone camera made for RallyCam (modules/rallycam-export/ios): a preview, person detection with Apple's Vision framework,
+ * and a recorder that draws the overlay onto every frame while it records. The saved file already has the overlay in it.
+ */
+const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, detection }, ref) {
+  const native = Capture!;
+  const Preview = CapturePreview!;
+
+  useEffect(() => {
+    let cancelled = false;
+    const errors = native.addListener('onError', (e) => onError(e.message));
+    native.startSession(CAPTURE_FPS)
+      .then((info) => {
+        if (cancelled) return;
+        onFps(info.fps);
+        onReady();
+      })
+      .catch((e: Error) => onError(e.message));
+    return () => {
+      cancelled = true;
+      errors.remove();
+      native.stopSession().catch(() => {});
+    };
+    // The camera starts once for the life of the screen.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const onDetections = detection?.onDetections;
+  useEffect(() => {
+    if (!onDetections) return;
+    const sub = native.addListener('onDetections', (e) => onDetections(e.boxes));
+    return () => sub.remove();
+  }, [native, onDetections]);
+
+  const roi = detection?.roi ?? null;
+  const detecting = detection?.enabled === true && roi != null;
+  useEffect(() => {
+    if (detecting && roi) native.setDetection(true, roi.x, roi.y, roi.w, roi.h);
+    else native.setDetection(false, 0, 0, 0, 0);
+  }, [native, detecting, roi]);
+
+  useImperativeHandle(ref, () => ({
+    bakesOverlay: true,
+    async start() {
+      native.startRecording(new File(Paths.cache, `game-${Date.now()}.mp4`).uri, VIDEO_FPS);
+    },
+    async stop() {
+      return (await native.stopRecording()) ?? undefined;
+    },
+    setOverlay(scene) {
+      native.setOverlay(JSON.stringify(scene));
+    },
+  }), [native]);
+
+  return <Preview style={style} />;
+});
+
+export default NativeCaptureRecorder;

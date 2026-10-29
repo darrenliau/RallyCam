@@ -156,7 +156,7 @@ export default function MatchReview() {
             </>
           ) : match.overlayVideoUri ? (
             <>
-              <Text style={s.muted}>The overlay is part of this video. The original video without it is kept too.</Text>
+              <Text style={s.muted}>The overlay is part of this video.{match.overlayVideoUri !== match.videoUri ? ' The original video without it is kept too.' : ''}</Text>
               <Button label="Share video with overlay" onPress={() => Sharing.shareAsync(match.overlayVideoUri!, { mimeType: 'video/mp4', dialogTitle: 'Game video with overlay' }).catch(() => {})} />
             </>
           ) : (

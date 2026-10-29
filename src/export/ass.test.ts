@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { OverlayData, OverlaySnapshot } from '../analysis/overlay';
 import type { MatchConfig, Rally } from '../engine/types';
-import { assAlpha, assColor, assText, assTime, buildAss, buildScene, buildSegments, ellipse, roundRect } from './ass';
+import { assAlpha, assColor, assText, assTime, buildAss, buildLiveScene, buildScene, buildSegments, ellipse, roundRect } from './ass';
+import { replay } from '../engine/scoring';
 
 describe('ASS helpers', () => {
   it('formats times as h:mm:ss.cc', () => {
@@ -162,6 +163,49 @@ describe('buildScene (also read by the iPhone exporter)', () => {
   });
 
   it('survives a JSON round trip unchanged (it is written to a file for the phone)', () => {
+    expect(JSON.parse(JSON.stringify(scene))).toEqual(scene);
+  });
+});
+
+describe('buildLiveScene (drawn into the video while recording)', () => {
+  const config: MatchConfig = { type: 'singles', players: { A: ['You'], B: ['Sam'] }, bestOf: 1, firstServer: 'A' };
+  const state = replay(config, [{ winner: 'A', startMs: 0, endMs: 1000, source: 'manual' }]);
+  const corners = { farLeft: { x: 0.3, y: 0.4 }, farRight: { x: 0.7, y: 0.4 }, nearRight: { x: 0.95, y: 0.9 }, nearLeft: { x: 0.05, y: 0.9 } };
+  const snapshot: OverlaySnapshot = {
+    t: 0,
+    tracks: [{ id: 0, u: 0.5, v: 0.8 }, { id: 1, u: 0.5, v: 0.2 }],
+    assign: [0, 1],
+    dist: [12, 9],
+    shuttle: { speedKmh: 150, shots: 4, lastShot: { type: 'SMASH', player: 'You', number: 4 } },
+  };
+
+  it('shows everything for as long as it is the latest overlay', () => {
+    const scene = buildLiveScene({ config, state, snapshot, corners, frameAspect: 16 / 9 });
+    expect(scene.width).toBe(1920);
+    expect(scene.items.length).toBeGreaterThan(20);
+    for (const it of scene.items) {
+      expect(it.a).toBe(0);
+      expect(it.b).toBeGreaterThan(1e8);
+      expect(it.mx).toBeUndefined(); // nothing glides: there is no next snapshot
+    }
+  });
+
+  it('draws the current score, tags and speed', () => {
+    const texts = buildLiveScene({ config, state, snapshot, corners, frameAspect: 16 / 9 }).items.flatMap((i) => (i.k === 't' ? [i.s] : []));
+    expect(texts).toContain('1'); // You: 1
+    expect(texts).toContain('You');
+    expect(texts).toContain('Sam');
+    expect(texts).toContain('~150');
+    expect(texts).toContain('SMASH');
+    expect(texts).toContain('~12 m');
+  });
+
+  it('shows dashes and no players when nothing is tracked', () => {
+    const scene = buildLiveScene({ config, state, corners, frameAspect: 16 / 9 });
+    const texts = scene.items.flatMap((i) => (i.k === 't' ? [i.s] : []));
+    expect(texts).toContain('NEEDS SHUTTLE TRACKING');
+    expect(texts).not.toContain('~150');
+    expect(scene.items.some((i) => i.k === 's' && i.l === 20)).toBe(false); // no player rings
     expect(JSON.parse(JSON.stringify(scene))).toEqual(scene);
   });
 });

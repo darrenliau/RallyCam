@@ -19,7 +19,8 @@ import type { TagInfo } from '../components/PlayerOverlay';
 import { RecorderView, isExpoGo } from '../camera/RecorderView';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
-import { createMatch, finishMatch, saveOverlay, saveRallies } from '../db/matches';
+import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo } from '../db/matches';
+import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, keepFile } from '../export/storage';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
@@ -219,6 +220,39 @@ export default function Record() {
     return () => clearInterval(id);
   }, [recording, names, meter]);
 
+  // Cameras that draw the overlay into the video while recording get a fresh copy of it a few times a second.
+  const liveState = useRef(state);
+  liveState.current = state;
+  const cornersRef = useRef(corners);
+  cornersRef.current = corners;
+  useEffect(() => {
+    if (!recording) return;
+    const push = () => {
+      const handle = recorder.current;
+      if (!handle?.setOverlay) return;
+      const { tracks: tr, shuttle: sh, tracking } = latest.current;
+      const snapshot = tr.length || sh
+        ? {
+            t: 0,
+            tracks: tr.map((x) => ({ id: x.id, u: x.u, v: x.v, ...(x.lost ? { lost: x.lost } : {}) })),
+            assign: [...assignRef.current],
+            dist: names.map((_, i) => (tracking ? meter.metres(i) : null)),
+            ...(sh ? { shuttle: sh } : {}),
+          }
+        : undefined;
+      handle.setOverlay(buildLiveScene({
+        config,
+        state: liveState.current,
+        snapshot,
+        corners: cornersToFrame(cornersRef.current, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }),
+        frameAspect: FRAME_ASPECT,
+      }));
+    };
+    push();
+    const id = setInterval(push, 250);
+    return () => clearInterval(id);
+  }, [recording, names, meter, config]);
+
   const persist = useCallback(async (next: MatchState) => {
     setState(next);
     await saveRallies(await getMatchId(), next.rallies);
@@ -254,8 +288,11 @@ export default function Record() {
     }
     const kept = uri ? keepFile(uri, `${id}.${extensionOf(uri)}`) : null;
     await finishMatch(id, kept, startedAt.current ? Date.now() - startedAt.current : 0);
-    // On an iPhone dev build the video with the overlay drawn in is made right away, so the game ends up as one video
-    router.replace({ pathname: '/match/[id]', params: { id, ...(kept && canExportOnDevice ? { export: '1' } : {}) } });
+    // The iPhone camera draws the overlay while recording, so that file is already the finished video.
+    const baked = kept != null && recorder.current?.bakesOverlay === true;
+    if (baked) await setOverlayVideo(id, kept);
+    // Otherwise, on an iPhone dev build, Review makes the video with the overlay drawn in right away
+    router.replace({ pathname: '/match/[id]', params: { id, ...(kept && !baked && canExportOnDevice ? { export: '1' } : {}) } });
   };
 
   // A game is over at 21 (win by 2, capped at 30). Stop recording a moment later so the final score is seen.

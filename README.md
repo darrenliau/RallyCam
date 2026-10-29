@@ -90,6 +90,13 @@ npx tsx tools/evaluate-tracking.ts --session s01 --doubles --analysis-fps 15
 It needs `data/labels/s01_court.json` (the four court corners in video pixels, same file as the Phase 0 labelling spec). The report shows how often all players are seen, gaps, distance moved and possible identity swaps ("jumps"). For positional accuracy, hand-label about 50 frames in `data/labels/s01_players.csv` (`frame,id,x,y`: the player's feet in pixels, id 0 and 1 for the near side left to right, 2 and 3 for the far side) and add `--gt data/labels/s01_players.csv`.
 The Python script has not been run against real weights from the build environment, only syntax-checked.
 
+## Live recording with the overlay in the video (iPhone)
+On an iPhone development build the app uses its own camera (`modules/rallycam-export/ios/CaptureController.swift`, AVFoundation) instead of vision-camera. It shows the preview, records at 1080p and up to 120 fps where the phone allows it, and draws the overlay onto every frame while recording (Core Image, on the GPU), writing an H.264 + AAC .mp4 at 60 frames per second. When the game ends the file is already the finished video with the overlay in it, so there is no export step and no waiting. The raw 120 fps frames are only used for tracking.
+- The overlay for the current moment is built in JavaScript (`buildLiveScene`) and sent to the camera about four times a second. Scores change at once, rings and tags follow the players with a small delay.
+- Player detection on this path uses Apple's Vision framework (`VNDetectHumanRectanglesRequest`) on the court area, about 15 times a second, instead of the TFLite model. The tracker after it is the same. Compare the two on real footage: set `PREFER_NATIVE_CAPTURE` to `false` in `src/camera/RecorderView.tsx` to go back to vision-camera and the TFLite detector.
+- Expo Go and Android are unchanged (expo-camera, and vision-camera).
+- Not checked on a phone: I could not compile Swift. Things to look at first: whether the fps chip reads 120 (or 60), whether the preview matches the overlay, whether the saved video plays with sound and the overlay the right way up, and how warm the phone gets.
+
 ## Development build with Xcode (free Apple ID, needs a Mac)
 1. Install Xcode from the Mac App Store, then open it once and accept the licence. Install CocoaPods: `brew install cocoapods` (or `sudo gem install cocoapods`).
 2. `git clone https://github.com/darrenliau/RallyCam.git && cd RallyCam && npm install`

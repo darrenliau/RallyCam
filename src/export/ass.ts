@@ -342,6 +342,47 @@ export function buildScene(input: AssInput): Scene {
   return { width: resX, height: resY, items: c.items };
 }
 
+/** Longer than any game: items of a live scene stay on screen until the next one replaces them. */
+const LIVE_END = 1e9;
+
+export interface LiveInput {
+  config: MatchConfig;
+  /** The game as it stands now. */
+  state: MatchState;
+  /** What the tracker reports right now, or undefined when nothing is tracked. */
+  snapshot?: OverlaySnapshot;
+  /** Court corners as fractions of the video frame. */
+  corners: OverlayData['corners'];
+  frameAspect: number;
+}
+
+/**
+ * The overlay for this moment only. The phone's camera code draws it onto every recorded frame until the next one arrives,
+ * so the finished video has the overlay in it with no extra step. It uses the same drawing code as the exported scene.
+ */
+export function buildLiveScene(input: LiveInput): Scene {
+  const resX = 1920;
+  const resY = Math.round(resX / input.frameAspect);
+  const k = resX / DESIGN_W;
+  const canvasH = DESIGN_W / input.frameAspect;
+  const c: Ctx = { k, items: [] };
+  const { config, state, snapshot } = input;
+  const names = [...config.players.A, ...config.players.B];
+  const nNear = config.players.A.length;
+  const colorOf = (p: number) => (p < nNear ? NEAR[p] : FAR[p - nNear]);
+
+  scoreboard(c, state, 0, LIVE_END);
+  shuttleCards(c, snapshot, 0, LIVE_END);
+  distanceCard(c, names, colorOf, snapshot, 0, LIVE_END, canvasH);
+  courtMapStatic(c, LIVE_END);
+  if (snapshot) {
+    const map = courtMap(cornersInBox(input.corners ?? { farLeft: { x: 0.3, y: 0.3 }, farRight: { x: 0.7, y: 0.3 }, nearRight: { x: 0.95, y: 0.8 }, nearLeft: { x: 0.05, y: 0.8 } }, resX, resY));
+    mapDots(c, snapshot, colorOf, 0, LIVE_END);
+    players(c, { start: 0, end: LIVE_END, snap: snapshot }, map, names, colorOf);
+  }
+  return { width: resX, height: resY, items: c.items };
+}
+
 /** Writes a scene as an ASS subtitle file. */
 export function sceneToAss(scene: Scene, fontName = 'Arial'): string {
   const lines: string[] = [];
