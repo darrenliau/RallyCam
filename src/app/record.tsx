@@ -228,7 +228,12 @@ export default function Record() {
     const id = setInterval(() => {
       if (usesNativeCapture && Capture) {
         const st = Capture.getStatus();
-        setDiag(`native camera (${st.lens || 'not started'}, ${st.running ? 'running' : 'NOT running'}, ${st.framesIn} frames in) · pushed ${st.overlayPushes}, drawn ${st.overlayDecoded}, failed ${st.overlayFailed} · frames ${st.framesWritten}, with overlay ${st.framesWithOverlay}${st.lastProblem ? ` · ${st.lastProblem}` : ''}`);
+        setDiag([
+          `native camera (${st.lens || 'not started'}, ${st.device}, ${st.running ? 'running' : 'NOT running'}), ${st.framesIn} frames in`,
+          `picture brightness ${st.luma}/255 (0 = black), exposure ${st.exposureMs.toFixed(1)} ms, ISO ${Math.round(st.iso)}`,
+          `sound: ${st.audioBuffers} buffers, loudness ${Math.round(st.audioLevel * 100)}%, in file ${st.audioInFile ? 'yes' : 'NO'}`,
+          `overlay pushed ${st.overlayPushes}, drawn ${st.overlayDecoded}, failed ${st.overlayFailed} · video frames ${st.framesWritten}, with overlay ${st.framesWithOverlay}${st.lastProblem ? ` · ${st.lastProblem}` : ''}`,
+        ].join('\n'));
       } else {
         setDiag(isExpoGo ? 'Expo Go camera (overlay is not drawn into the video)' : 'vision-camera (overlay is drawn after the game)');
       }

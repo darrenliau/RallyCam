@@ -88,6 +88,11 @@ final class CaptureController: NSObject {
   private var lastProblem = ""
   private var lens = ""
   private var framesIn = 0
+  private var luma = -1                 // average brightness of the camera picture, 0 (black) to 255
+  private var audioBuffers = 0
+  private var audioPeak: Float = 0      // loudest sample since the last status read, 0 to 1
+  private var deviceName = ""
+  private var activeDevice: AVCaptureDevice?
 
   private func bump(_ change: () -> Void) {
     statsLock.lock()
@@ -97,7 +102,7 @@ final class CaptureController: NSObject {
 
   func status() -> [String: Any] {
     statsLock.lock()
-    defer { statsLock.unlock() }
+    defer { audioPeak = 0; statsLock.unlock() }
     return [
       "overlayPushes": pushes,
       "overlayDecoded": decoded,
@@ -108,6 +113,14 @@ final class CaptureController: NSObject {
       "lens": lens,
       "running": session.isRunning,
       "framesIn": framesIn,
+      "luma": luma,
+      "audioBuffers": audioBuffers,
+      "audioLevel": Double(audioPeak),
+      "audioInFile": audioInput != nil,
+      "device": deviceName,
+      "exposureMs": (activeDevice.map { CMTimeGetSeconds($0.exposureDuration) * 1000 }) ?? 0,
+      "iso": Double(activeDevice?.iso ?? 0),
+      "interrupted": !session.isRunning,
     ]
   }
 
@@ -224,6 +237,8 @@ final class CaptureController: NSObject {
     }
     statsLock.lock()
     lens = chosen.lens
+    activeDevice = device
+    deviceName = device.localizedName
     statsLock.unlock()
     return chosen.fps
   }
@@ -367,6 +382,7 @@ final class CaptureController: NSObject {
   // MARK: recording
 
   func startRecording(url: URL, outputFps: Double) {
+    bump { pushes = 0; decoded = 0; failed = 0; composited = 0; withOverlay = 0; lastProblem = "" }
     videoQueue.async {
       self.recordingURL = url
       self.outputFps = outputFps > 0 ? outputFps : 60
@@ -427,10 +443,20 @@ final class CaptureController: NSObject {
 
       var audio: AVAssetWriterInput?
       if session.outputs.contains(audioOutput) {
-        let settings = audioOutput.recommendedAudioSettingsForAssetWriter(writingTo: .mp4) as? [String: Any]
+        var settings = audioOutput.recommendedAudioSettingsForAssetWriter(writingTo: .mp4) as? [String: Any]
+        if settings == nil || settings?.isEmpty == true {
+          // Uncompressed audio cannot go in an .mp4, so ask for AAC explicitly
+          settings = [
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVNumberOfChannelsKey: 1,
+            AVSampleRateKey: 44100,
+            AVEncoderBitRateKey: 96_000,
+          ]
+        }
+        NSLog("RallyCam: audio writer settings \(String(describing: settings))")
         let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
         input.expectsMediaDataInRealTime = true
-        if w.canAdd(input) { w.add(input); audio = input }
+        if w.canAdd(input) { w.add(input); audio = input } else { NSLog("RallyCam: the video file cannot take the audio input") }
       }
 
       guard w.startWriting() else { throw CaptureError.setup(w.error?.localizedDescription ?? "cannot start writing") }
@@ -466,6 +492,56 @@ final class CaptureController: NSObject {
   }
 }
 
+extension CaptureController {
+  /// Average brightness (0 to 255) of a camera frame, from a coarse grid of the luma plane. Near 0 means the picture is black.
+  static func brightness(of buffer: CVPixelBuffer) -> Int {
+    CVPixelBufferLockBaseAddress(buffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(buffer, .readOnly) }
+    guard CVPixelBufferGetPlaneCount(buffer) > 0, let base = CVPixelBufferGetBaseAddressOfPlane(buffer, 0) else { return -1 }
+    let width = CVPixelBufferGetWidthOfPlane(buffer, 0)
+    let height = CVPixelBufferGetHeightOfPlane(buffer, 0)
+    let stride = CVPixelBufferGetBytesPerRowOfPlane(buffer, 0)
+    var total = 0
+    var count = 0
+    for gy in 0..<9 {
+      for gx in 0..<16 {
+        let x = (gx * 2 + 1) * width / 32
+        let y = (gy * 2 + 1) * height / 18
+        total += Int(base.load(fromByteOffset: y * stride + x, as: UInt8.self))
+        count += 1
+      }
+    }
+    return count > 0 ? total / count : -1
+  }
+
+  /// Loudest sample in an audio buffer, 0 to 1.
+  static func peak(of sample: CMSampleBuffer) -> Float {
+    guard
+      let format = CMSampleBufferGetFormatDescription(sample),
+      let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee,
+      let block = CMSampleBufferGetDataBuffer(sample)
+    else { return 0 }
+    var length = 0
+    var pointer: UnsafeMutablePointer<Int8>?
+    guard CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer) == kCMBlockBufferNoErr,
+          let base = pointer
+    else { return 0 }
+    var peak: Float = 0
+    if asbd.mFormatFlags & kAudioFormatFlagIsFloat != 0 && asbd.mBitsPerChannel == 32 {
+      let count = length / 4
+      base.withMemoryRebound(to: Float.self, capacity: count) { p in
+        for i in 0..<count { peak = max(peak, abs(p[i])) }
+      }
+    } else if asbd.mBitsPerChannel == 16 {
+      let count = length / 2
+      base.withMemoryRebound(to: Int16.self, capacity: count) { p in
+        for i in 0..<count { peak = max(peak, abs(Float(p[i])) / 32768) }
+      }
+    }
+    return peak
+  }
+}
+
 /// Small helper so the adaptor settings live in one place.
 enum AVPixelBufferAdaptorFactory {
   static func make(for input: AVAssetWriterInput, width: Int, height: Int) -> AVAssetWriterInputPixelBufferAdaptor {
@@ -484,6 +560,8 @@ enum AVPixelBufferAdaptorFactory {
 extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCaptureAudioDataOutputSampleBufferDelegate {
   func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
     if output === audioOutput {
+      let peak = CaptureController.peak(of: sampleBuffer)
+      bump { audioBuffers += 1; audioPeak = max(audioPeak, peak) }
       audioLock.lock()
       defer { audioLock.unlock() }
       guard audioOpen, let input = audioInput, input.isReadyForMoreMediaData else { return }
@@ -495,6 +573,10 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
 
     guard output === videoOutput, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
     let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+    if framesIn % 30 == 0 {
+      let measured = CaptureController.brightness(of: pixelBuffer)
+      bump { luma = measured }
+    }
     bump {
       framesIn += 1
       if framesIn == 1 { NSLog("RallyCam: first camera frame, \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))") }
