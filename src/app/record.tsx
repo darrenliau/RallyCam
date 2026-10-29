@@ -28,6 +28,7 @@ import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, QUALITY, mbPerMinute, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
+import { judgeRally, type Verdict } from '../analysis/rallyEnd';
 import { addRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
 import type { MatchConfig, MatchState, Side } from '../engine/types';
@@ -270,6 +271,12 @@ export default function Record() {
   const trailFrame = useRef<{ x: number; y: number }[]>([]);
   const [trail, setTrail] = useState<{ x: number; y: number }[]>([]);
   const [shuttleDiag, setShuttleDiag] = useState('');
+  // A guess at who won the rally, from where the shuttle was last hit and last seen. The player confirms it.
+  const [suggestion, setSuggestion] = useState<Verdict | null>(null);
+  const judged = useRef(false);
+  const tally = useRef({ shown: 0, agreed: 0, flipped: 0, dismissed: 0 });
+  const judgeCtx = useRef({ recording: false, over: false, singles: config.type === 'singles' });
+  judgeCtx.current = { recording, over: !!state.matchWinner, singles: config.type === 'singles' };
 
   // Cameras that draw the overlay into the video while recording get a fresh copy of it a few times a second.
   const liveState = useRef(state);
@@ -325,17 +332,36 @@ export default function Record() {
     const id = setInterval(() => {
       const now = lastShuttleT.current;
       setShuttle(estimator.stats(now));
+      const ctx = judgeCtx.current;
+      if (ctx.recording && !ctx.over && !judged.current) {
+        const verdict = judgeRally(estimator.trace(), now, ctx.singles);
+        if (verdict) {
+          judged.current = true;
+          tally.current.shown += 1;
+          setSuggestion(verdict);
+        }
+      }
       const frames = estimator.trail(now);
       trailFrame.current = frames;
       setTrail(frames.map((p) => frameToScreen(p, geometry())));
       const st = native.getShuttleStatus();
-      setShuttleDiag(`shuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+      const t = tally.current;
+      setShuttleDiag(`score guesses: ${t.shown} shown, ${t.agreed} agreed, ${t.flipped} flipped, ${t.dismissed} ignored\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shuttleOn, estimator]);
 
-  useEffect(() => { estimator.newRally(); }, [state.rallies.length, estimator]);
+  useEffect(() => {
+    estimator.newRally();
+    judged.current = false;
+    setSuggestion(null);
+  }, [state.rallies.length, estimator]);
+  useEffect(() => {
+    if (!suggestion) return;
+    const id = setTimeout(() => { tally.current.dismissed += 1; setSuggestion(null); }, 15000);
+    return () => clearTimeout(id);
+  }, [suggestion]);
 
   // Keep a log of what the tracker saw, for studying it on a computer afterwards
   const shuttleLogUri = useRef<string | null>(null);
@@ -351,6 +377,18 @@ export default function Record() {
   }, []);
 
   /** Called by the analysis source in Phase 2. Until then only the dev buttons call it. */
+  const onSuggestion = useCallback((flip: boolean) => {
+    if (!suggestion || !recordingStarted.current) return;
+    const winner: Side = flip ? (suggestion.winner === 'A' ? 'B' : 'A') : suggestion.winner;
+    tally.current[flip ? 'flipped' : 'agreed'] += 1;
+    const now = Date.now() - startedAt.current;
+    const next = addRally(state, { winner, startMs: lastEnd.current, endMs: now, source: 'auto', confidence: flip ? 0.3 : suggestion.confidence });
+    lastEnd.current = now;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setSuggestion(null);
+    persist(next);
+  }, [state, persist, suggestion]);
+
   const onPoint = useCallback((winner: Side) => {
     if (!recordingStarted.current) return;
     const now = Date.now() - startedAt.current;
@@ -525,6 +563,19 @@ export default function Record() {
         </View>
       )}
 
+      {suggestion && !state.matchWinner && !aligning && (
+        <View style={[s.banner, { top: T + 8, left: (width - 440) / 2, width: 440 }]}>
+          <Text style={s.bannerText}>
+            Point to {sideLabel(state.config, suggestion.winner)}?{suggestion.confidence < 0.5 ? ' (not sure)' : ''}
+          </Text>
+          <View style={s.suggestRow}>
+            <Button label="Yes" onPress={() => onSuggestion(false)} style={s.suggestBtn} />
+            <Button kind="ghost" label="Other side" onPress={() => onSuggestion(true)} style={s.suggestBtn} />
+            <Button kind="ghost" label="No point" onPress={() => { tally.current.dismissed += 1; setSuggestion(null); }} style={s.suggestBtn} />
+          </View>
+        </View>
+      )}
+
       {state.matchWinner && (
         <View style={s.gameOver} pointerEvents="none">
           <Text style={s.gameOverTitle}>Game over</Text>
@@ -553,6 +604,8 @@ const s = StyleSheet.create({
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF3B30' },
   chipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   banner: { position: 'absolute', gap: 10, backgroundColor: 'rgba(5,9,10,0.85)', borderRadius: 16, padding: 14 },
+  suggestRow: { flexDirection: 'row', gap: 8 },
+  suggestBtn: { flex: 1 },
   bannerText: { color: '#fff', fontSize: 14 },
   err: { position: 'absolute', color: '#fff', backgroundColor: 'rgba(200,40,30,0.85)', padding: 8, borderRadius: 8, fontSize: 12, overflow: 'hidden' },
   dev: { position: 'absolute', width: 260, backgroundColor: 'rgba(5,9,10,0.7)', borderRadius: 12, padding: 8, gap: 6 },

@@ -153,3 +153,9 @@ Settings > Shuttle tracking (experimental). iPhone native camera only. The camer
 
 - The Record screen debug line shows frames seen, candidates, tracked and shaky counts.
 - While recording, a CSV log of what the tracker saw is saved next to the game. On the Review screen, use the shuttle log card to share it for study on a computer.
+
+## Automatic scoring (first version)
+
+With the experimental shuttle tracker on, the app guesses who won each rally and asks. `src/analysis/rallyEnd.ts` waits until the shuttle has been out of sight for 1.6 s after at least two shots, then applies one rule: the last hitter wins only if the shuttle crossed the net and came down inside the court (singles lines in singles). Into the net or out loses the point. A banner on the Record screen offers **Yes / Other side / No point**; nothing is scored without a tap, and it disappears after 15 s. Confirmed points are saved as `auto` with a confidence (lower near lines or the net). The debug panel counts guesses shown, agreed, flipped and ignored, which is the number to improve on court.
+
+Known weak spots: the shuttle's floor position is only right when it is low, so high or far landings are guesses; rallies where the tracker loses the shuttle mid-flight end early.

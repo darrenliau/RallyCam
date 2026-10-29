@@ -1,5 +1,6 @@
 import { COURT_L, COURT_W } from './court';
 import type { ShuttleStats } from './shuttle';
+import type { FloorPoint, RallyTrace } from './rallyEnd';
 
 /** A confirmed shuttle position from the camera. x and y are fractions of the frame, t is in seconds. */
 export interface ShuttleSample { t: number; x: number; y: number }
@@ -30,6 +31,7 @@ export class ShuttleEstimator {
   private smoothMs = 0;
   private seen = false;
   private recent: ShuttleSample[] = [];
+  private hit: FloorPoint | null = null;
 
   /** `toFloor` maps a frame position to court coordinates (0..1 across and along the court). */
   constructor(private toFloor: (x: number, y: number) => { u: number; v: number }) {}
@@ -42,6 +44,7 @@ export class ShuttleEstimator {
     this.prevVel = null;
     this.last = null;
     this.seen = false;
+    this.hit = null;
   }
 
   push(s: ShuttleSample) {
@@ -53,7 +56,7 @@ export class ShuttleEstimator {
 
     if (!last || gap > GONE_AFTER_S) {
       // a new flight starts. The first one in a rally is the serve.
-      if (!this.seen || this.shots === 0) this.count(s.t);
+      if (!this.seen || this.shots === 0) this.count(s.t, u, v);
       this.seen = true;
       this.prevVel = null;
       this.last = { ...s, u, v };
@@ -82,16 +85,23 @@ export class ShuttleEstimator {
       if (norm > 0 && dot / norm < -0.2 && s.t - this.lastHitT >= MIN_HIT_GAP_S) {
         this.lastShotKmh = this.peakKmh;
         this.peakKmh = 0;
-        this.count(s.t);
+        this.count(s.t, last.u, last.v);
       }
     }
     this.prevVel = vel;
     this.last = { ...s, u, v };
   }
 
-  private count(t: number) {
+  private count(t: number, u: number, v: number) {
     this.shots += 1;
     this.lastHitT = t;
+    this.hit = { t, u, v };
+  }
+
+  /** What happened so far in this rally, for deciding who won it (see rallyEnd.ts). */
+  trace(): RallyTrace {
+    const l = this.last;
+    return { shots: this.shots, lastHit: this.hit, lastSeen: l ? { t: l.t, u: l.u, v: l.v } : null };
   }
 
   /** What to show now, or null if the shuttle has not been seen for a while. */
