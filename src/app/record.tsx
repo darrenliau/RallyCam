@@ -29,7 +29,7 @@ import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, 
 import { FOOTAGE_PRESET, QUALITY, mbPerMinute, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { judgeRally, type Verdict } from '../analysis/rallyEnd';
-import { addRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
+import { addRally, editRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
 import type { MatchConfig, MatchState, Side } from '../engine/types';
 import { colors } from '../theme';
@@ -346,7 +346,7 @@ export default function Record() {
       setTrail(frames.map((p) => frameToScreen(p, geometry())));
       const st = native.getShuttleStatus();
       const t = tally.current;
-      setShuttleDiag(`score guesses: ${t.shown} shown, ${t.agreed} agreed, ${t.flipped} flipped, ${t.dismissed} ignored\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+      setShuttleDiag(`score guesses: ${t.shown} given, ${t.flipped} swapped by you\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -357,11 +357,13 @@ export default function Record() {
     judged.current = false;
     setSuggestion(null);
   }, [state.rallies.length, estimator]);
+  // The point just given automatically, shown briefly so it can be swapped. It is also flagged for review afterwards when unsure.
+  const [autoPoint, setAutoPoint] = useState<{ winner: Side; index: number } | null>(null);
   useEffect(() => {
-    if (!suggestion) return;
-    const id = setTimeout(() => { tally.current.dismissed += 1; setSuggestion(null); }, 15000);
+    if (!autoPoint) return;
+    const id = setTimeout(() => setAutoPoint(null), 6000);
     return () => clearTimeout(id);
-  }, [suggestion]);
+  }, [autoPoint]);
 
   // Keep a log of what the tracker saw, for studying it on a computer afterwards
   const shuttleLogUri = useRef<string | null>(null);
@@ -377,17 +379,27 @@ export default function Record() {
   }, []);
 
   /** Called by the analysis source in Phase 2. Until then only the dev buttons call it. */
-  const onSuggestion = useCallback((flip: boolean) => {
+  // The camera's guess is applied straight away; a swap or Fix last point corrects it, and unsure ones are flagged in Review.
+  useEffect(() => {
     if (!suggestion || !recordingStarted.current) return;
-    const winner: Side = flip ? (suggestion.winner === 'A' ? 'B' : 'A') : suggestion.winner;
-    tally.current[flip ? 'flipped' : 'agreed'] += 1;
     const now = Date.now() - startedAt.current;
-    const next = addRally(state, { winner, startMs: lastEnd.current, endMs: now, source: 'auto', confidence: flip ? 0.3 : suggestion.confidence });
+    const next = addRally(state, { winner: suggestion.winner, startMs: lastEnd.current, endMs: now, source: 'auto', confidence: suggestion.confidence });
     lastEnd.current = now;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    tally.current.agreed += 1;
     setSuggestion(null);
+    setAutoPoint({ winner: suggestion.winner, index: next.rallies.length - 1 });
     persist(next);
-  }, [state, persist, suggestion]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [suggestion]);
+
+  const swapAutoPoint = useCallback(() => {
+    if (!autoPoint || state.rallies.length !== autoPoint.index + 1) return;
+    tally.current.agreed -= 1;
+    tally.current.flipped += 1;
+    setAutoPoint(null);
+    persist(editRally(state, autoPoint.index, { winner: autoPoint.winner === 'A' ? 'B' : 'A', source: 'manual' }));
+  }, [state, persist, autoPoint]);
 
   const onPoint = useCallback((winner: Side) => {
     if (!recordingStarted.current) return;
@@ -563,15 +575,11 @@ export default function Record() {
         </View>
       )}
 
-      {suggestion && !state.matchWinner && !aligning && (
-        <View style={[s.banner, { top: T + 8, left: (width - 440) / 2, width: 440 }]}>
-          <Text style={s.bannerText}>
-            Point to {sideLabel(state.config, suggestion.winner)}?{suggestion.confidence < 0.5 ? ' (not sure)' : ''}
-          </Text>
+      {autoPoint && state.rallies.length === autoPoint.index + 1 && !aligning && (
+        <View style={[s.banner, { top: T + 8, left: (width - 360) / 2, width: 360 }]}>
+          <Text style={s.bannerText}>Point to {sideLabel(state.config, autoPoint.winner)} (automatic)</Text>
           <View style={s.suggestRow}>
-            <Button label="Yes" onPress={() => onSuggestion(false)} style={s.suggestBtn} />
-            <Button kind="ghost" label="Other side" onPress={() => onSuggestion(true)} style={s.suggestBtn} />
-            <Button kind="ghost" label="No point" onPress={() => { tally.current.dismissed += 1; setSuggestion(null); }} style={s.suggestBtn} />
+            <Button kind="ghost" label="Wrong, swap" onPress={swapAutoPoint} style={s.suggestBtn} />
           </View>
         </View>
       )}
