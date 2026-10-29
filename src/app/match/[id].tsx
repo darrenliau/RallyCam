@@ -40,7 +40,7 @@ export default function MatchReview() {
       <Pressable onPress={() => router.back()}><Text style={s.back}>‹ Back</Text></Pressable>
       <View>
         <Text style={s.title}>{describeMatch(state)}</Text>
-        <Text style={s.muted}>{new Date(match.createdAt).toLocaleString()} · {resultLine(state)} {state.config.bestOf > 1 ? `(${gameScores(state)})` : ''}</Text>
+        <Text style={s.muted}>{new Date(match.createdAt).toLocaleString()}{match.venueName ? ` · ${match.venueName}` : ''} · {resultLine(state)} {state.config.bestOf > 1 ? `(${gameScores(state)})` : ''}</Text>
       </View>
 
       {match.videoUri ? (

@@ -6,7 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { courtMap, defaultCorners, type Corners } from '../analysis/court';
+import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
 import { CourtAligner } from '../components/CourtAligner';
 import { PlayerOverlay, type TagInfo } from '../components/PlayerOverlay';
@@ -16,6 +16,7 @@ import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
 import { ScoreBoard } from '../components/ScoreBoard';
 import { createMatch, finishMatch, saveRallies } from '../db/matches';
+import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { addRally, newMatch, undoLast } from '../engine/scoring';
 import { formatClock } from '../engine/format';
 import type { MatchConfig, MatchState, Side } from '../engine/types';
@@ -28,7 +29,7 @@ export default function Record() {
   useKeepAwake();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const { config: raw } = useLocalSearchParams<{ config: string }>();
+  const { config: raw, venueId } = useLocalSearchParams<{ config: string; venueId?: string }>();
   const config = useRef<MatchConfig>(JSON.parse(raw)).current;
 
   // Matches are filmed in landscape: the court is wide and the phone sits on a tripod. Everything else stays portrait.
@@ -41,7 +42,7 @@ export default function Record() {
   const [micPerm, askMic] = useMicrophonePermissions();
   const recorder = useRef<RecorderHandle>(null);
   const recordingStarted = useRef(false);
-  const matchId = useRef<Promise<string>>(createMatch(config));
+  const matchId = useRef<Promise<string>>(createMatch(config, venueId));
   const startedAt = useRef(0);
   const lastEnd = useRef(0);
 
@@ -54,8 +55,28 @@ export default function Record() {
   // Court alignment and player tags
   const sizeKey = `${Math.round(width)}x${Math.round(height)}`;
   const [dragged, setDragged] = useState<Corners | null>(null);
-  const corners = dragged ?? savedCorners[sizeKey] ?? defaultCorners(width, height);
+  const [venue, setVenue] = useState<Venue | null>(null);
+  const [venueLoaded, setVenueLoaded] = useState(!venueId);
   const [aligning, setAligning] = useState(true);
+  const [staleCourt, setStaleCourt] = useState(false);
+  const venueCorners = venue?.corners ? denormalizeCorners(venue.corners, width, height) : null;
+  const corners = dragged ?? venueCorners ?? savedCorners[sizeKey] ?? defaultCorners(width, height);
+
+  // A venue with a saved court starts locked, unless this screen is a different shape from when it was saved.
+  useEffect(() => {
+    if (!venueId) return;
+    getVenue(venueId).then((v) => {
+      setVenue(v);
+      if (v?.corners) {
+        const aspect = width / height;
+        const differs = v.aspect != null && Math.abs(v.aspect - aspect) / v.aspect > 0.03;
+        setStaleCourt(differs);
+        setAligning(differs);
+      }
+      setVenueLoaded(true);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [venueId]);
   const map = useMemo(() => courtMap(corners), [corners]);
   const nNear = config.players.A.length;
   const names = useMemo(() => [...config.players.A, ...config.players.B], [config]);
@@ -93,7 +114,17 @@ export default function Record() {
   };
   useEffect(() => () => simulator.current?.stop(), []);
 
-  const lockCourt = () => { savedCorners[sizeKey] = corners; setAligning(false); };
+  const lockCourt = () => {
+    savedCorners[sizeKey] = corners;
+    if (venue) {
+      const norm = normalizeCorners(corners, width, height);
+      saveVenueCorners(venue.id, norm, width / height);
+      setVenue({ ...venue, corners: norm, aspect: width / height });
+      setDragged(null);
+    }
+    setStaleCourt(false);
+    setAligning(false);
+  };
   const onTagPress = (id: number) => {
     if (selected == null) return setSelected(id);
     if (selected !== id) {
@@ -169,7 +200,7 @@ export default function Record() {
   return (
     <View style={s.fill}>
       <RecorderView ref={recorder} style={StyleSheet.absoluteFill} onReady={onReady} onError={setRecError} onFps={setFps} />
-      {aligning ? (
+      {!venueLoaded ? null : aligning ? (
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
       ) : (
         <PlayerOverlay map={map} width={width} height={height} tracks={tracks} tagFor={tagFor} selected={selected} onTagPress={onTagPress} />
@@ -220,9 +251,12 @@ export default function Record() {
         </>
       )}
 
-      {aligning && (
+      {venueLoaded && aligning && (
         <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
-          <Text style={s.bannerText}>Drag the four dots onto the outer corners of the court, then lock it in.</Text>
+          <Text style={s.bannerText}>
+            {staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court, then lock it in. '}
+            {venue ? `It is saved for ${venue.name}.` : ''}
+          </Text>
           <Button label="Lock court" onPress={lockCourt} />
         </View>
       )}

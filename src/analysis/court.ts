@@ -55,6 +55,21 @@ export function courtMap(c: Corners): CourtMap {
   };
 }
 
+const KEYS = ['farLeft', 'farRight', 'nearRight', 'nearLeft'] as const;
+
+/** Corners as fractions of the screen, so a saved court does not depend on pixel size. */
+export function normalizeCorners(c: Corners, w: number, h: number): Corners {
+  const out = {} as Corners;
+  for (const k of KEYS) out[k] = { x: c[k].x / w, y: c[k].y / h };
+  return out;
+}
+
+export function denormalizeCorners(c: Corners, w: number, h: number): Corners {
+  const out = {} as Corners;
+  for (const k of KEYS) out[k] = { x: c[k].x * w, y: c[k].y * h };
+  return out;
+}
+
 /** A starting guess for a phone on a tripod behind the near baseline. The user drags the corners to fit. */
 export const defaultCorners = (w: number, h: number): Corners =>
   w > h

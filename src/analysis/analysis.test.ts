@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { courtMap, defaultCorners } from './court';
+import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners } from './court';
 import { DistanceMeter } from './players';
 
 describe('court mapping', () => {
@@ -53,5 +53,19 @@ describe('DistanceMeter', () => {
     m.update([{ id: 0, u: 0.5, v: 0.6 }], owner);
     expect(m.metres(1)).toBeGreaterThan(1);
     expect(m.metres(0)).toBe(0);
+  });
+});
+
+describe('saved court corners', () => {
+  it('round-trips through fractions of the screen', () => {
+    const c = defaultCorners(800, 400);
+    const back = denormalizeCorners(normalizeCorners(c, 800, 400), 800, 400);
+    expect(back.nearLeft.x).toBeCloseTo(c.nearLeft.x, 9);
+    expect(back.farRight.y).toBeCloseTo(c.farRight.y, 9);
+  });
+  it('scales to a different screen size', () => {
+    const n = normalizeCorners(defaultCorners(800, 400), 800, 400);
+    const big = denormalizeCorners(n, 1600, 800);
+    expect(big.farLeft.x).toBeCloseTo(defaultCorners(1600, 800).farLeft.x, 9);
   });
 });

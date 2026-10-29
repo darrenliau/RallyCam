@@ -12,6 +12,8 @@ interface MatchRow {
   video_uri: string | null;
   duration_ms: number | null;
   status: 'live' | 'done';
+  venue_id: string | null;
+  venue_name: string | null;
 }
 
 interface RallyRow {
@@ -31,6 +33,7 @@ export interface MatchRecord {
   videoUri: string | null;
   durationMs: number | null;
   status: 'live' | 'done';
+  venueName: string | null;
   state: MatchState;
 }
 
@@ -58,16 +61,17 @@ function toRecord(m: MatchRow, rallies: RallyRow[]): MatchRecord {
     videoUri: m.video_uri,
     durationMs: m.duration_ms,
     status: m.status,
+    venueName: m.venue_name,
     state: replay(config, rallies.sort((a, b) => a.idx - b.idx).map(toRally)),
   };
 }
 
-export async function createMatch(config: MatchConfig): Promise<string> {
+export async function createMatch(config: MatchConfig, venueId?: string | null): Promise<string> {
   const db = await getDb();
   const id = newId();
   await db.runAsync(
-    'INSERT INTO matches (id, created_at, type, best_of, first_server, players) VALUES (?, ?, ?, ?, ?, ?)',
-    id, Date.now(), config.type, config.bestOf, config.firstServer, JSON.stringify(config.players),
+    'INSERT INTO matches (id, created_at, type, best_of, first_server, players, venue_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    id, Date.now(), config.type, config.bestOf, config.firstServer, JSON.stringify(config.players), venueId ?? null,
   );
   return id;
 }
@@ -94,14 +98,18 @@ export async function finishMatch(matchId: string, videoUri: string | null, dura
 
 export async function listMatches(): Promise<MatchRecord[]> {
   const db = await getDb();
-  const matches = await db.getAllAsync<MatchRow>('SELECT * FROM matches ORDER BY created_at DESC');
+  const matches = await db.getAllAsync<MatchRow>(
+    'SELECT m.*, v.name AS venue_name FROM matches m LEFT JOIN venues v ON v.id = m.venue_id ORDER BY m.created_at DESC',
+  );
   const rallies = await db.getAllAsync<RallyRow>('SELECT * FROM rallies');
   return matches.map((m) => toRecord(m, rallies.filter((r) => r.match_id === m.id)));
 }
 
 export async function getMatch(id: string): Promise<MatchRecord | null> {
   const db = await getDb();
-  const m = await db.getFirstAsync<MatchRow>('SELECT * FROM matches WHERE id = ?', id);
+  const m = await db.getFirstAsync<MatchRow>(
+    'SELECT m.*, v.name AS venue_name FROM matches m LEFT JOIN venues v ON v.id = m.venue_id WHERE m.id = ?', id,
+  );
   if (!m) return null;
   const rallies = await db.getAllAsync<RallyRow>('SELECT * FROM rallies WHERE match_id = ?', id);
   return toRecord(m, rallies);

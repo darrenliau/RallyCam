@@ -37,5 +37,20 @@ async function open() {
       PRIMARY KEY (match_id, idx)
     );
   `);
+  // Versioned changes after the first release of the schema
+  const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
+  if ((row?.user_version ?? 0) < 1) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS venues (
+        id           TEXT PRIMARY KEY,
+        name         TEXT NOT NULL,
+        corners      TEXT,
+        aspect       REAL,
+        last_used_at INTEGER NOT NULL
+      );
+      ALTER TABLE matches ADD COLUMN venue_id TEXT REFERENCES venues(id) ON DELETE SET NULL;
+      PRAGMA user_version = 1;
+    `);
+  }
   return db;
 }

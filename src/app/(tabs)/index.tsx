@@ -32,7 +32,7 @@ export default function Matches() {
                 <View style={{ flex: 1 }}>
                   <Text style={s.name}>{describeMatch(m.state)}</Text>
                   <Text style={s.muted}>
-                    {new Date(m.createdAt).toLocaleDateString()} · {m.state.config.type}
+                    {new Date(m.createdAt).toLocaleDateString()} · {m.state.config.type}{m.venueName ? ` · ${m.venueName}` : ''}
                     {m.durationMs ? ` · ${formatClock(m.durationMs)}` : ''}
                   </Text>
                 </View>
