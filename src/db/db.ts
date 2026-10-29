@@ -69,5 +69,14 @@ async function open() {
       PRAGMA user_version = 3;
     `);
   }
+  if (version < 4) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS settings (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
+      PRAGMA user_version = 4;
+    `);
+  }
   return db;
 }

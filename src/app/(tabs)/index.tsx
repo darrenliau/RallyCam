@@ -1,21 +1,30 @@
 import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { listMatches, type MatchRecord } from '../../db/matches';
 import { describeMatch, formatClock, resultLine } from '../../engine/format';
 import { Button, Card, Label } from '../../components/ui';
+import { useSettings } from '../../settings';
 import { colors } from '../../theme';
 
 export default function Matches() {
   const insets = useSafeAreaInsets();
   const [matches, setMatches] = useState<MatchRecord[] | null>(null);
+  const settings = useSettings();
+  // First launch: show how it works once
+  useEffect(() => {
+    if (settings.ready && !settings.guideSeen) router.push('/guide');
+  }, [settings.ready, settings.guideSeen]);
   useFocusEffect(useCallback(() => { listMatches().then(setMatches); }, []));
 
   return (
     <ScrollView contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 24, gap: 10 }}>
       <View style={s.head}>
         <Text style={s.title}>Matches</Text>
+        <Pressable onPress={() => router.push('/settings')} accessibilityRole="button" accessibilityLabel="Settings" hitSlop={10}>
+          <Text style={s.gear}>Settings</Text>
+        </Pressable>
         <Button label="+ New match" onPress={() => router.navigate('/new')} style={{ minHeight: 40, paddingHorizontal: 14 }} />
       </View>
       {matches === null ? null : matches.length === 0 ? (
@@ -48,6 +57,7 @@ export default function Matches() {
 
 const s = StyleSheet.create({
   head: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 },
+  gear: { color: colors.muted, fontSize: 14, fontWeight: '600' },
   title: { color: colors.text, fontSize: 32, fontWeight: '700' },
   row: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   name: { color: colors.text, fontSize: 16, fontWeight: '600' },

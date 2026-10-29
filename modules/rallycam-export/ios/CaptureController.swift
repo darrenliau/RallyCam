@@ -69,6 +69,9 @@ final class CaptureController: NSObject {
   private var state = RecordingState.idle
   private var recordingURL: URL?
   private var outputFps = 60.0
+  private var outputWidth = 1920
+  private var outputHeight = 1080
+  private var outputBitRate = 14_000_000
   private var writer: AVAssetWriter?
   private var videoInput: AVAssetWriterInput?
   private var audioInput: AVAssetWriterInput?
@@ -381,11 +384,14 @@ final class CaptureController: NSObject {
 
   // MARK: recording
 
-  func startRecording(url: URL, outputFps: Double) {
+  func startRecording(url: URL, outputFps: Double, width: Int, height: Int, bitRate: Int) {
     bump { pushes = 0; decoded = 0; failed = 0; composited = 0; withOverlay = 0; lastProblem = "" }
     videoQueue.async {
       self.recordingURL = url
       self.outputFps = outputFps > 0 ? outputFps : 60
+      self.outputWidth = width > 0 ? width : 1920
+      self.outputHeight = height > 0 ? height : 1080
+      self.outputBitRate = bitRate > 0 ? bitRate : 14_000_000
       self.nextKeep = -Double.infinity
       self.state = .armed
     }
@@ -425,19 +431,19 @@ final class CaptureController: NSObject {
     do {
       try? FileManager.default.removeItem(at: url)
       let w = try AVAssetWriter(outputURL: url, fileType: .mp4)
-      let bitRate = Int(Double(width * height) * outputFps * 0.12)
+      // `width` and `height` are the camera frame. The file may be smaller (see the quality setting).
       let v = AVAssetWriterInput(mediaType: .video, outputSettings: [
         AVVideoCodecKey: AVVideoCodecType.h264,
-        AVVideoWidthKey: width,
-        AVVideoHeightKey: height,
+        AVVideoWidthKey: outputWidth,
+        AVVideoHeightKey: outputHeight,
         AVVideoCompressionPropertiesKey: [
-          AVVideoAverageBitRateKey: bitRate,
+          AVVideoAverageBitRateKey: outputBitRate,
           AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
           AVVideoExpectedSourceFrameRateKey: Int(outputFps),
         ],
       ])
       v.expectsMediaDataInRealTime = true
-      let a = AVPixelBufferAdaptorFactory.make(for: v, width: width, height: height)
+      let a = AVPixelBufferAdaptorFactory.make(for: v, width: outputWidth, height: outputHeight)
       guard w.canAdd(v) else { throw CaptureError.setup("cannot add the video input") }
       w.add(v)
 
@@ -484,6 +490,12 @@ final class CaptureController: NSObject {
     var image = CIImage(cvPixelBuffer: pixelBuffer)
     let overlay = currentOverlay()
     if let overlay { image = overlay.composited(over: image) }
+    // The overlay is drawn at camera size first, then everything is scaled down to the size of the file.
+    let sourceWidth = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+    let sourceHeight = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+    if Int(sourceWidth) != outputWidth || Int(sourceHeight) != outputHeight {
+      image = image.transformed(by: CGAffineTransform(scaleX: CGFloat(outputWidth) / sourceWidth, y: CGFloat(outputHeight) / sourceHeight))
+    }
     ciContext.render(image, to: target)
     let ok = adaptor.append(target, withPresentationTime: time)
     bump {

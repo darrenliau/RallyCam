@@ -1,11 +1,11 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners } from '../../analysis/court';
 import { cornersInBox, snapshotAt, stateAt, type OverlayData } from '../../analysis/overlay';
-import { deleteMatch, getMatch, getOverlay, saveRallies, setOverlayVideo, type MatchRecord } from '../../db/matches';
+import { clearVideos, deleteMatch, getMatch, getOverlay, saveRallies, setOverlayVideo, type MatchRecord } from '../../db/matches';
 import { editRally, otherSide, sideLabel } from '../../engine/scoring';
 import { describeMatch, formatClock, gameScores, resultLine } from '../../engine/format';
 import { longestRun, progression, rallyStats } from '../../engine/stats';
@@ -14,7 +14,7 @@ import { MatchOverlay } from '../../components/MatchOverlay';
 import { buildAss } from '../../export/ass';
 import { cancelExport, canExportOnDevice, exportVideoWithOverlay } from '../../export/nativeExport';
 import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFiles';
-import { extensionOf, keepFile } from '../../export/storage';
+import { extensionOf, fileBytes, formatBytes, keepFile, removeFile } from '../../export/storage';
 import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
 import { HIDE_EMPTY_SHUTTLE } from '../../config';
@@ -90,7 +90,27 @@ export default function MatchReview() {
   const jump = (ms?: number) => {
     if (match.videoUri && ms != null) { player.currentTime = ms / 1000; player.play(); }
   };
-  const remove = async () => { await deleteMatch(match.id); router.back(); };
+  const remove = async () => {
+    removeFile(match.videoUri);
+    removeFile(match.overlayVideoUri);
+    await deleteMatch(match.id);
+    router.back();
+  };
+  const videoBytes = fileBytes(match.videoUri) + (match.overlayVideoUri && match.overlayVideoUri !== match.videoUri ? fileBytes(match.overlayVideoUri) : 0);
+  const deleteVideo = () =>
+    Alert.alert('Delete the video?', 'The video file is removed from this phone. The score and stats stay.', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Delete video',
+        style: 'destructive',
+        onPress: async () => {
+          removeFile(match.videoUri);
+          removeFile(match.overlayVideoUri);
+          await clearVideos(match.id);
+          reload();
+        },
+      },
+    ]);
 
   return (
     <ScrollView contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: insets.bottom + 24, gap: 12 }}>
@@ -196,7 +216,7 @@ export default function MatchReview() {
 
       <View style={s.row}>
         <Stat value={String(stats.count)} label="rallies" />
-        <Stat value={stats.avgSeconds ? `${stats.avgSeconds.toFixed(1)}s` : '–'} label="average rally" />
+        <Stat value={stats.avgSeconds ? `${stats.avgSeconds.toFixed(1)}s` : '–'} label="avg time per point" />
         <Stat value={run ? String(run.length) : '–'} label="best run" />
       </View>
 
@@ -225,6 +245,13 @@ export default function MatchReview() {
           </Card>
         );
       })}
+      {videoBytes > 0 && (
+        <Card style={{ gap: 6 }}>
+          <Label>Video file</Label>
+          <Text style={s.muted}>{formatBytes(videoBytes)} on this phone.</Text>
+          <Button kind="ghost" label="Delete video (keep score)" onPress={deleteVideo} />
+        </Card>
+      )}
       <Button kind="ghost" label="Delete game" onPress={remove} />
     </ScrollView>
   );

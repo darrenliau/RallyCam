@@ -46,6 +46,11 @@ export function longestRun(state: MatchState): { side: Side; length: number } | 
   return best;
 }
 
+/**
+ * `avgSeconds` is the average time per point. With scoring by tapping, a point's start is the previous tap, so this includes
+ * the pause between rallies and is not the length of a rally. It becomes real rally length once rallies are detected
+ * automatically (their start and end then come from the video).
+ */
 export function rallyStats(state: MatchState) {
   const timed = state.rallies.filter((r) => r.startMs != null && r.endMs != null);
   const secs = timed.map((r) => (r.endMs! - r.startMs!) / 1000);

@@ -16,6 +16,8 @@ export default function RootLayout() {
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="record" options={{ gestureEnabled: false, animation: 'fade' }} />
         <Stack.Screen name="match/[id]" />
+        <Stack.Screen name="settings" />
+        <Stack.Screen name="guide" options={{ presentation: 'modal' }} />
       </Stack>
     </>
   );

@@ -24,7 +24,8 @@ import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo } f
 import { HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
-import { extensionOf, keepFile } from '../export/storage';
+import { extensionOf, formatBytes, freeSpaceBytes, keepFile } from '../export/storage';
+import { FOOTAGE_PRESET, QUALITY, mbPerMinute, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { addRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
@@ -41,6 +42,8 @@ export default function Record() {
   const { config: raw, venueId, capture } = useLocalSearchParams<{ config: string; venueId?: string; capture?: string }>();
   // Footage capture: 120 frames per second and nothing drawn on the picture, for collecting shuttle-tracking footage.
   const footage = capture === '1';
+  const settings = useSettings();
+  const profile = footage ? FOOTAGE_PRESET : QUALITY[settings.quality];
   const config = useRef<MatchConfig>(JSON.parse(raw)).current;
 
   // Matches are filmed in landscape: the court is wide and the phone sits on a tripod. Everything else stays portrait.
@@ -195,12 +198,12 @@ export default function Record() {
   const [recording, setRecording] = useState(false);
   const onReady = useCallback(() => setCameraReady(true), []);
   useEffect(() => {
-    if (!cameraReady || aligning || !venueLoaded || recordingStarted.current) return;
+    if (!cameraReady || aligning || !venueLoaded || !settings.ready || recordingStarted.current) return;
     recordingStarted.current = true;
     startedAt.current = Date.now();
     setRecording(true);
     recorder.current?.start().catch((e: Error) => setRecError(e.message));
-  }, [cameraReady, aligning, venueLoaded]);
+  }, [cameraReady, aligning, venueLoaded, settings.ready]);
 
   // Save what the overlay shows, about four times a second, so the review can draw it over the video again.
   const snapshots = useRef<OverlaySnapshot[]>([]);
@@ -347,6 +350,10 @@ export default function Record() {
   const T = insets.top + 8;
   const B = insets.bottom + 12;
   const lowFps = fps != null && fps < 60;
+  // Warn if a 30 minute game at this quality might not fit
+  const needBytes = mbPerMinute(profile) * 30 * 1e6;
+  const freeBytes = freeSpaceBytes();
+  const lowSpace = freeBytes < needBytes * 1.2;
 
   return (
     <View style={s.fill}>
@@ -357,7 +364,7 @@ export default function Record() {
         onError={setRecError}
         onFps={setFps}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
-        videoFps={footage ? 120 : undefined}
+        videoProfile={usesNativeCapture ? profile : undefined}
       />
       {!venueLoaded ? null : aligning && (
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
@@ -400,9 +407,13 @@ export default function Record() {
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
 
-      {(recError || lowFps) && (
+      {(recError || lowFps || lowSpace) && (
         <Text style={[s.err, { top: T + 96, left: (width - 360) / 2, width: 360 }, !recError && { backgroundColor: 'rgba(160,110,20,0.9)' }]}>
-          {recError ? `Recording failed: ${recError}` : `Only ${fps} fps on this phone. Fast shots will blur, so tracking will be less accurate.`}
+          {recError
+            ? `Recording failed: ${recError}`
+            : lowSpace
+              ? `Only ${formatBytes(freeBytes)} free. A 30 minute game needs about ${formatBytes(needBytes)} at this quality. Delete old videos or pick a smaller quality in Settings.`
+              : `Only ${fps} fps on this phone. Fast shots will blur, so tracking will be less accurate.`}
         </Text>
       )}
 

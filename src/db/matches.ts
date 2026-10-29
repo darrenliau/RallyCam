@@ -109,6 +109,12 @@ export async function setOverlayVideo(matchId: string, uri: string | null): Prom
   await db.runAsync('UPDATE matches SET overlay_video_uri = ? WHERE id = ?', uri, matchId);
 }
 
+/** Forgets the video files of a game, for when they have been deleted to free space. The score and stats stay. */
+export async function clearVideos(matchId: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE matches SET video_uri = NULL, overlay_video_uri = NULL WHERE id = ?', matchId);
+}
+
 export async function listMatches(): Promise<MatchRecord[]> {
   const db = await getDb();
   const matches = await db.getAllAsync<MatchRow>(

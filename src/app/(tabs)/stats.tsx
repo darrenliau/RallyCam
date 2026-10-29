@@ -32,7 +32,7 @@ export default function Stats() {
             <Stat value={`${wins}–${done.length - wins}`} label="win / loss" />
           </View>
           <View style={s.row}>
-            <Stat value={avg ? `${avg.toFixed(1)}s` : '–'} label="average rally" />
+            <Stat value={avg ? `${avg.toFixed(1)}s` : '–'} label="avg time per point" />
             <Stat value={String(bestRun)} label="best points in a row" />
           </View>
           {needsCheck > 0 && <Card><Text style={s.muted}>{needsCheck} automatically scored points are marked for you to check.</Text></Card>}

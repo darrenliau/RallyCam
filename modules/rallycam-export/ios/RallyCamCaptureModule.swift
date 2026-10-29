@@ -57,10 +57,10 @@ public class RallyCamCaptureModule: Module {
       CaptureController.shared.stop { promise.resolve(nil) }
     }
 
-    // Starts writing a video at the next frame. outputFps is how many frames per second end up in the file.
-    Function("startRecording") { (uri: String, outputFps: Double) in
+    // Starts writing a video at the next frame. The file has outputFps frames per second, is width x height, and about bitRate bits per second.
+    Function("startRecording") { (uri: String, outputFps: Double, width: Int, height: Int, bitRate: Int) in
       let url = URL(string: uri).flatMap { $0.scheme != nil ? $0 : nil } ?? URL(fileURLWithPath: uri)
-      CaptureController.shared.startRecording(url: url, outputFps: outputFps)
+      CaptureController.shared.startRecording(url: url, outputFps: outputFps, width: width, height: height, bitRate: bitRate)
     }
 
     // Resolves with the finished file's uri, overlay included.
