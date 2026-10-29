@@ -209,3 +209,23 @@ describe('buildLiveScene (drawn into the video while recording)', () => {
     expect(JSON.parse(JSON.stringify(scene))).toEqual(scene);
   });
 });
+
+describe('hiding empty shuttle cards (store builds)', () => {
+  const config: MatchConfig = { type: 'singles', players: { A: ['You'], B: ['Sam'] }, bestOf: 1, firstServer: 'A' };
+  const state = replay(config, []);
+  const corners = { farLeft: { x: 0.3, y: 0.4 }, farRight: { x: 0.7, y: 0.4 }, nearRight: { x: 0.95, y: 0.9 }, nearLeft: { x: 0.05, y: 0.9 } };
+  const texts = (hide: boolean, withShuttle: boolean) =>
+    buildLiveScene({
+      config, state, corners, frameAspect: 16 / 9, hideEmptyShuttle: hide,
+      snapshot: { t: 0, tracks: [], assign: [], dist: [0, 0], ...(withShuttle ? { shuttle: { speedKmh: 99, shots: 2 } } : {}) },
+    }).items.flatMap((i) => (i.k === 't' ? [i.s] : []));
+
+  it('leaves the cards out when there is no shuttle data', () => {
+    expect(texts(true, false)).not.toContain('SHUTTLE SPEED');
+    expect(texts(false, false)).toContain('SHUTTLE SPEED');
+  });
+  it('still shows them once the shuttle is tracked', () => {
+    expect(texts(true, true)).toContain('SHUTTLE SPEED');
+    expect(texts(true, true)).toContain('~99');
+  });
+});

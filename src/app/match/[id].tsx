@@ -17,6 +17,7 @@ import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFi
 import { extensionOf, keepFile } from '../../export/storage';
 import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
+import { HIDE_EMPTY_SHUTTLE } from '../../config';
 import { colors } from '../../theme';
 
 export default function MatchReview() {
@@ -47,7 +48,7 @@ export default function MatchReview() {
       const duration = match.durationMs ?? ((match.state.rallies[match.state.rallies.length - 1]?.endMs ?? 0) + 5000);
       const made = await exportVideoWithOverlay({
         videoUri: match.videoUri,
-        input: { config: match.state.config, rallies: match.state.rallies, overlay, durationMs: duration },
+        input: { config: match.state.config, rallies: match.state.rallies, overlay, durationMs: duration, hideEmptyShuttle: HIDE_EMPTY_SHUTTLE },
         name: baseName(match.videoUri),
         fps: 30,
         onProgress: setExporting,
@@ -130,6 +131,7 @@ export default function MatchReview() {
                       state={stateAt(state.config, state.rallies, playMs)}
                       distanceRows={names.map((name, i) => ({ name, color: colorOf(i), metres: snap?.dist[i] ?? null }))}
                       shuttle={snap?.shuttle ?? null}
+                      hideEmptyShuttle={HIDE_EMPTY_SHUTTLE}
                       mapTop={10}
                     />
                   </View>
@@ -184,7 +186,7 @@ export default function MatchReview() {
               style={{ flex: 1 }}
               onPress={() => {
                 const duration = match.durationMs ?? ((state.rallies[state.rallies.length - 1]?.endMs ?? 0) + 5000);
-                const ass = buildAss({ config: state.config, rallies: state.rallies, overlay, durationMs: duration });
+                const ass = buildAss({ config: state.config, rallies: state.rallies, overlay, durationMs: duration, hideEmptyShuttle: HIDE_EMPTY_SHUTTLE });
                 shareOverlayFile(baseName(match.videoUri!), ass).catch(() => {});
               }}
             />

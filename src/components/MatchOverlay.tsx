@@ -15,7 +15,7 @@ export interface Insets { l: number; r: number; t: number; b: number }
  */
 export function MatchOverlay({
   width, height, inset, map, tracks, tagFor, selected = null, onTagPress, state, distanceRows, shuttle,
-  scoreOnly = false, mapTop = 8,
+  scoreOnly = false, mapTop = 8, hideEmptyShuttle = false,
 }: {
   width: number; height: number; inset: Insets; map: CourtMap; tracks: Track[]; tagFor: (id: number) => TagInfo;
   selected?: number | null; onTagPress?: (id: number) => void; state: MatchState;
@@ -24,6 +24,8 @@ export function MatchOverlay({
   scoreOnly?: boolean;
   /** Distance from the top for the court map, so the Record screen can leave room for its status chips. */
   mapTop?: number;
+  /** Leave out the shuttle cards while there is no shuttle data. */
+  hideEmptyShuttle?: boolean;
 }) {
   const boardW = Math.min(360, width - 2 * (inset.l + 170));
   return (
@@ -36,9 +38,11 @@ export function MatchOverlay({
       </View>
       {!scoreOnly && (
         <>
-          <View style={{ position: 'absolute', top: inset.t, right: inset.r }} pointerEvents="none">
-            <ShuttleCards stats={shuttle} />
-          </View>
+          {(shuttle || !hideEmptyShuttle) && (
+            <View style={{ position: 'absolute', top: inset.t, right: inset.r }} pointerEvents="none">
+              <ShuttleCards stats={shuttle} />
+            </View>
+          )}
           <View style={{ position: 'absolute', left: inset.l, top: mapTop }} pointerEvents="none">
             <CourtMapCard tracks={tracks} tagFor={tagFor} />
           </View>

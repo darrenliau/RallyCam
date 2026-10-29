@@ -21,6 +21,7 @@ import { Capture } from '../../modules/rallycam-export/src/capture';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
 import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo } from '../db/matches';
+import { HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, keepFile } from '../export/storage';
@@ -37,7 +38,9 @@ export default function Record() {
   useKeepAwake();
   const insets = useSafeAreaInsets();
   const { width, height } = useWindowDimensions();
-  const { config: raw, venueId } = useLocalSearchParams<{ config: string; venueId?: string }>();
+  const { config: raw, venueId, capture } = useLocalSearchParams<{ config: string; venueId?: string; capture?: string }>();
+  // Footage capture: 120 frames per second and nothing drawn on the picture, for collecting shuttle-tracking footage.
+  const footage = capture === '1';
   const config = useRef<MatchConfig>(JSON.parse(raw)).current;
 
   // Matches are filmed in landscape: the court is wide and the phone sits on a tripod. Everything else stays portrait.
@@ -250,7 +253,7 @@ export default function Record() {
     if (!recording) return;
     const push = () => {
       const handle = recorder.current;
-      if (!handle?.setOverlay) return;
+      if (footage || !handle?.setOverlay) return;
       const { tracks: tr, shuttle: sh, tracking } = latest.current;
       const snapshot = tr.length || sh
         ? {
@@ -267,12 +270,13 @@ export default function Record() {
         snapshot,
         corners: cornersToFrame(cornersRef.current, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }),
         frameAspect: FRAME_ASPECT,
+        hideEmptyShuttle: HIDE_EMPTY_SHUTTLE,
       }));
     };
     push();
     const id = setInterval(push, 250);
     return () => clearInterval(id);
-  }, [recording, names, meter, config]);
+  }, [recording, names, meter, config, footage]);
 
   const persist = useCallback(async (next: MatchState) => {
     setState(next);
@@ -310,10 +314,10 @@ export default function Record() {
     const kept = uri ? keepFile(uri, `${id}.${extensionOf(uri)}`) : null;
     await finishMatch(id, kept, startedAt.current ? Date.now() - startedAt.current : 0);
     // The iPhone camera draws the overlay while recording, so that file is already the finished video.
-    const baked = kept != null && recorder.current?.bakesOverlay === true;
+    const baked = kept != null && recorder.current?.bakesOverlay === true && !footage;
     if (baked) await setOverlayVideo(id, kept);
     // Otherwise, on an iPhone dev build, Review makes the video with the overlay drawn in right away
-    router.replace({ pathname: '/match/[id]', params: { id, ...(kept && !baked && canExportOnDevice ? { export: '1' } : {}) } });
+    router.replace({ pathname: '/match/[id]', params: { id, ...(kept && !baked && !footage && canExportOnDevice ? { export: '1' } : {}) } });
   };
 
   // A game is over at 21 (win by 2, capped at 30). Stop recording a moment later so the final score is seen.
@@ -353,6 +357,7 @@ export default function Record() {
         onError={setRecError}
         onFps={setFps}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
+        videoFps={footage ? 120 : undefined}
       />
       {!venueLoaded ? null : aligning && (
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
@@ -371,6 +376,7 @@ export default function Record() {
           distanceRows={names.map((name, i) => ({ name, color: colorOf(i), metres: isExpoGo && !simulating ? null : meter.metres(i) }))}
           shuttle={shuttle}
           scoreOnly={aligning}
+          hideEmptyShuttle={HIDE_EMPTY_SHUTTLE}
           mapTop={T + 40}
         />
       )}
@@ -390,6 +396,7 @@ export default function Record() {
             <Text style={s.chipText}>Players {tracks.filter((t) => !t.lost).length}/{names.length}</Text>
           </View>
         )}
+        {footage && <View style={s.chip}><Text style={[s.chipText, { color: colors.accent }]}>Footage capture · no overlay</Text></View>}
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
 
@@ -399,14 +406,17 @@ export default function Record() {
         </Text>
       )}
 
+      {!aligning && !footage && (
+        <View style={[s.scoreBtns, { bottom: B, left: (width - 320) / 2 }]}>
+          <Button label={`+ ${config.players.A.join(' & ')}`} onPress={() => onPoint('A')} disabled={!recording || !!state.matchWinner} style={s.scoreBtn} />
+          <Button label={`+ ${config.players.B.join(' & ')}`} onPress={() => onPoint('B')} disabled={!recording || !!state.matchWinner} style={s.scoreBtn} />
+        </View>
+      )}
+
       {__DEV__ && !aligning && (
-        <View style={[s.dev, { bottom: B, left: (width - 260) / 2 }]}>
-          <Text style={s.devText}>Dev only. Automatic scoring is not built yet.</Text>
+        <View style={[s.dev, { bottom: B + 64, left: (width - 260) / 2 }]}>
+          <Text style={s.devText}>Dev only: test tools</Text>
           {diag !== '' && <Text style={s.devDiag}>{diag}</Text>}
-          <View style={{ flexDirection: 'row', gap: 8 }}>
-            <Button kind="ghost" label="Near" onPress={() => onPoint('A')} disabled={!recording} style={s.devBtn} />
-            <Button kind="ghost" label="Far" onPress={() => onPoint('B')} disabled={!recording} style={s.devBtn} />
-          </View>
           <Button kind="ghost" label={simulating ? 'Stop simulation' : 'Simulate players'} onPress={toggleSimulation} style={s.devBtn} />
         </View>
       )}
@@ -454,6 +464,8 @@ const s = StyleSheet.create({
   dev: { position: 'absolute', width: 260, backgroundColor: 'rgba(5,9,10,0.7)', borderRadius: 12, padding: 8, gap: 6 },
   devDiag: { color: '#fff', fontSize: 10 },
   devText: { color: '#C8F04A', fontSize: 11 },
+  scoreBtns: { position: 'absolute', width: 320, flexDirection: 'row', gap: 8 },
+  scoreBtn: { flex: 1, minHeight: 52, paddingHorizontal: 8 },
   devBtn: { flex: 1, minHeight: 36 },
   gameOver: { position: 'absolute', alignSelf: 'center', top: '38%', backgroundColor: 'rgba(5,9,10,0.9)', borderRadius: 16, paddingHorizontal: 24, paddingVertical: 14, alignItems: 'center' },
   gameOverTitle: { color: '#fff', fontSize: 26, fontWeight: '700' },

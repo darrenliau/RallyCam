@@ -32,4 +32,6 @@ export interface RecorderProps {
   /** The frame rate the camera actually settled on. Can be lower than the 120 fps we ask for. */
   onFps: (fps: number | undefined) => void;
   detection?: DetectionOptions;
+  /** Frames per second written to the saved video, for cameras that choose it. Default 60. */
+  videoFps?: number;
 }

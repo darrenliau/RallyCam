@@ -18,6 +18,8 @@ export interface AssInput {
   /** Overlay updates per second. Players glide between updates, so 2 looks smooth and keeps the file small. */
   updatesPerSecond?: number;
   fontName?: string;
+  /** Leave out the shuttle cards while there is no shuttle data (see src/config.ts). */
+  hideEmptyShuttle?: boolean;
 }
 
 const DESIGN_W = 780;
@@ -114,6 +116,8 @@ export interface Scene {
 interface Ctx {
   k: number; // design px to scene px
   items: SceneItem[];
+  /** Leave out the shuttle cards while there is nothing to show in them. */
+  hideEmptyShuttle?: boolean;
 }
 
 type Anchor = 7 | 8 | 9; // top left / top centre / top right
@@ -203,6 +207,7 @@ function scoreboard(c: Ctx, state: MatchState, a: number, b: number) {
 }
 
 function shuttleCards(c: Ctx, snap: OverlaySnapshot | undefined, a: number, b: number) {
+  if (c.hideEmptyShuttle && !snap?.shuttle) return;
   const k = c.k;
   const w = 168;
   const x0 = DESIGN_W - 12 - w;
@@ -313,7 +318,7 @@ export function buildScene(input: AssInput): Scene {
   const resY = Math.round(resX / overlay.frameAspect);
   const k = resX / DESIGN_W;
   const canvasH = DESIGN_W / overlay.frameAspect;
-  const c: Ctx = { k, items: [] };
+  const c: Ctx = { k, items: [], hideEmptyShuttle: input.hideEmptyShuttle };
   const names = [...config.players.A, ...config.players.B];
   const nNear = config.players.A.length;
   const colorOf = (p: number) => (p < nNear ? NEAR[p] : FAR[p - nNear]);
@@ -354,6 +359,7 @@ export interface LiveInput {
   /** Court corners as fractions of the video frame. */
   corners: OverlayData['corners'];
   frameAspect: number;
+  hideEmptyShuttle?: boolean;
 }
 
 /**
@@ -365,7 +371,7 @@ export function buildLiveScene(input: LiveInput): Scene {
   const resY = Math.round(resX / input.frameAspect);
   const k = resX / DESIGN_W;
   const canvasH = DESIGN_W / input.frameAspect;
-  const c: Ctx = { k, items: [] };
+  const c: Ctx = { k, items: [], hideEmptyShuttle: input.hideEmptyShuttle };
   const { config, state, snapshot } = input;
   const names = [...config.players.A, ...config.players.B];
   const nNear = config.players.A.length;

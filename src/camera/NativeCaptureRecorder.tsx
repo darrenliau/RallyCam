@@ -12,7 +12,7 @@ const VIDEO_FPS = 60;
  * iPhone camera made for RallyCam (modules/rallycam-export/ios): a preview, person detection with Apple's Vision framework,
  * and a recorder that draws the overlay onto every frame while it records. The saved file already has the overlay in it.
  */
-const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, detection }, ref) {
+const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, detection, videoFps }, ref) {
   const native = Capture!;
   const Preview = CapturePreview!;
 
@@ -52,7 +52,7 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
   useImperativeHandle(ref, () => ({
     bakesOverlay: true,
     async start() {
-      native.startRecording(new File(Paths.cache, `game-${Date.now()}.mp4`).uri, VIDEO_FPS);
+      native.startRecording(new File(Paths.cache, `game-${Date.now()}.mp4`).uri, videoFps ?? VIDEO_FPS);
     },
     async stop() {
       return (await native.stopRecording()) ?? undefined;
@@ -60,7 +60,7 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
     setOverlay(scene) {
       native.setOverlay(JSON.stringify(scene));
     },
-  }), [native]);
+  }), [native, videoFps]);
 
   return <Preview style={style} />;
 });

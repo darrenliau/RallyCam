@@ -3,6 +3,7 @@ import { useCallback, useState } from 'react';
 import { Alert, KeyboardAvoidingView, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createVenue, deleteVenue, listVenues, renameVenue, touchVenue, type Venue } from '../../db/venues';
+import { usesNativeCapture } from '../../camera/RecorderView';
 import type { MatchConfig, MatchType } from '../../engine/types';
 import { Button, Card, Label } from '../../components/ui';
 import { colors, radius } from '../../theme';
@@ -41,6 +42,7 @@ export default function NewMatch() {
   const [type, setType] = useState<MatchType>('singles');
   const [a, setA] = useState(['You', 'Mia']);
   const [b, setB] = useState(['Sam', 'Jun']);
+  const [footage, setFootage] = useState(false);
   const [venues, setVenues] = useState<Venue[]>([]);
   const [venueId, setVenueId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -88,7 +90,7 @@ export default function NewMatch() {
       type, bestOf: 1, firstServer: 'A', // one game: the recording stops when someone wins it
       players: { A: clean(a, ['You', 'Mia']), B: clean(b, ['Sam', 'Jun']) },
     };
-    router.push({ pathname: '/record', params: { config: JSON.stringify(config), ...(venueId ? { venueId } : {}) } });
+    router.push({ pathname: '/record', params: { config: JSON.stringify(config), ...(venueId ? { venueId } : {}), ...(footage ? { capture: '1' } : {}) } });
   };
   const set = (arr: string[], fn: (x: string[]) => void, i: number) => (v: string) => fn(arr.map((x, j) => (j === i ? v : x)));
 
@@ -133,8 +135,18 @@ export default function NewMatch() {
           )}
         </Card>
         <Text style={s.hint}>Put the phone on a tripod behind the near baseline, so all four court corners are in view.</Text>
-        <Text style={s.hint}>First to 21 wins, by 2 points, up to 30. Recording stops by itself when the game is won.</Text>
-        <Button label="Start game" onPress={start} />
+        <Text style={s.hint}>First to 21 wins, by 2 points, up to 30. Tap the winner's button after each point. Recording stops by itself when the game is won.</Text>
+        {usesNativeCapture && (
+          <Pressable accessibilityRole="switch" accessibilityState={{ checked: footage }} onPress={() => setFootage((v) => !v)}>
+            <Card style={{ gap: 4, borderColor: footage ? colors.accent : colors.line }}>
+              <Label>Footage capture · {footage ? 'on' : 'off'}</Label>
+              <Text style={s.hint}>
+                For collecting clean training footage for shuttle tracking. Records at 120 frames per second with nothing drawn on the picture. Then share the video from Review.
+              </Text>
+            </Card>
+          </Pressable>
+        )}
+        <Button label={footage ? 'Start footage capture' : 'Start game'} onPress={start} />
       </ScrollView>
     </KeyboardAvoidingView>
   );

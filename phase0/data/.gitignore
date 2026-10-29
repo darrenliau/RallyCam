@@ -1,0 +1,5 @@
+# Footage and model output are large. Keep only the small label and metadata files in git.
+raw/
+predictions/
+*.mp4
+*.mov
