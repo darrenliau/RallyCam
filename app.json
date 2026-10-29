@@ -8,7 +8,7 @@
     "userInterfaceStyle": "dark",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.example.rallycam",
+      "bundleIdentifier": "com.darrenliau.rallycam",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       }
@@ -21,7 +21,7 @@
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
       "predictiveBackGestureEnabled": false,
-      "package": "com.example.rallycam"
+      "package": "com.darrenliau.rallycam"
     },
     "web": {
       "favicon": "./assets/favicon.png"

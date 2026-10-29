@@ -39,7 +39,7 @@ npx expo start      # scan the QR code with a development build
 Camera recording works on a real phone, not in a simulator or on the web. Expo Go is fine for now. Once native modules such as vision-camera are added you need a development build (`eas build --profile development`).
 
 ## Before the first store build
-- Change `ios.bundleIdentifier` and `android.package` in `app.json` (currently `com.example.rallycam`).
+- Change `ios.bundleIdentifier` and `android.package` in `app.json` (currently `com.darrenliau.rallycam`).
 - Add the app icon and splash.
 - Apple Developer ($99/yr) and Google Play ($25 once) accounts, then `npx eas-cli@latest build` and `submit`.
 - Write the privacy policy (video stays on the device).
