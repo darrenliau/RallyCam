@@ -39,7 +39,8 @@ async function open() {
   `);
   // Versioned changes after the first release of the schema
   const row = await db.getFirstAsync<{ user_version: number }>('PRAGMA user_version');
-  if ((row?.user_version ?? 0) < 1) {
+  const version = row?.user_version ?? 0;
+  if (version < 1) {
     await db.execAsync(`
       CREATE TABLE IF NOT EXISTS venues (
         id           TEXT PRIMARY KEY,
@@ -50,6 +51,15 @@ async function open() {
       );
       ALTER TABLE matches ADD COLUMN venue_id TEXT REFERENCES venues(id) ON DELETE SET NULL;
       PRAGMA user_version = 1;
+    `);
+  }
+  if (version < 2) {
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS overlays (
+        match_id TEXT PRIMARY KEY REFERENCES matches(id) ON DELETE CASCADE,
+        data     TEXT NOT NULL
+      );
+      PRAGMA user_version = 2;
     `);
   }
   return db;

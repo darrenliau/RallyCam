@@ -1,13 +1,16 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { deleteMatch, getMatch, saveRallies, type MatchRecord } from '../../db/matches';
+import { courtMap, defaultCorners } from '../../analysis/court';
+import { cornersInBox, snapshotAt, stateAt, type OverlayData } from '../../analysis/overlay';
+import { deleteMatch, getMatch, getOverlay, saveRallies, type MatchRecord } from '../../db/matches';
 import { editRally, otherSide, sideLabel } from '../../engine/scoring';
 import { describeMatch, formatClock, gameScores, resultLine } from '../../engine/format';
 import { longestRun, progression, rallyStats } from '../../engine/stats';
 import { Button, Card, Label, Stat } from '../../components/ui';
+import { MatchOverlay } from '../../components/MatchOverlay';
 import { ScoreChart } from '../../components/ScoreChart';
 import { colors } from '../../theme';
 
@@ -19,6 +22,17 @@ export default function MatchReview() {
   useEffect(reload, [reload]);
 
   const player = useVideoPlayer(match?.videoUri ?? null);
+
+  // The overlay saved while recording is drawn over the video again, in step with the playback time.
+  const { width: screenW } = useWindowDimensions();
+  const [overlay, setOverlay] = useState<OverlayData | null>(null);
+  const [showOverlay, setShowOverlay] = useState(true);
+  const [playMs, setPlayMs] = useState(0);
+  useEffect(() => { getOverlay(id).then(setOverlay); }, [id]);
+  useEffect(() => {
+    const timer = setInterval(() => setPlayMs(player.currentTime * 1000), 200);
+    return () => clearInterval(timer);
+  }, [player]);
 
   if (!match) return <View style={{ flex: 1, backgroundColor: colors.bg }} />;
   const { state } = match;
@@ -43,7 +57,46 @@ export default function MatchReview() {
         <Text style={s.muted}>{new Date(match.createdAt).toLocaleString()}{match.venueName ? ` · ${match.venueName}` : ''} · {resultLine(state)} {state.config.bestOf > 1 ? `(${gameScores(state)})` : ''}</Text>
       </View>
 
-      {match.videoUri ? (
+      {match.videoUri && overlay ? (
+        <>
+          <Pressable onPress={() => setShowOverlay((v) => !v)} accessibilityRole="button">
+            <Text style={s.toggle}>Overlay: {showOverlay ? 'on' : 'off'} (tap to switch)</Text>
+          </Pressable>
+          {(() => {
+            const boxW = screenW - 32;
+            const canvasW = 780;
+            const canvasH = canvasW / overlay.frameAspect;
+            const k = boxW / canvasW;
+            const { A, B } = state.config.players;
+            const names = [...A, ...B];
+            const nNear = A.length;
+            const snap = snapshotAt(overlay.snapshots, playMs);
+            const colorOf = (i: number) => (i < nNear ? colors.near[i] : colors.far[i - nNear]);
+            const map = courtMap(cornersInBox(overlay.corners ?? defaultCorners(1, 1), canvasW, canvasH));
+            return (
+              <View style={{ width: boxW, height: boxW / overlay.frameAspect, borderRadius: 14, overflow: 'hidden', backgroundColor: '#000' }}>
+                <VideoView player={player} style={StyleSheet.absoluteFill} nativeControls contentFit="contain" />
+                {showOverlay && (
+                  <View pointerEvents="none" style={{ position: 'absolute', left: 0, top: 0, width: canvasW, height: canvasH, transformOrigin: 'top left', transform: [{ scale: k }] }}>
+                    <MatchOverlay
+                      width={canvasW}
+                      height={canvasH}
+                      inset={{ l: 12, r: 12, t: 10, b: 12 }}
+                      map={map}
+                      tracks={snap?.tracks ?? []}
+                      tagFor={(tid) => { const p = snap?.assign[tid] ?? tid; return { name: names[p] ?? '', color: colorOf(p) }; }}
+                      state={stateAt(state.config, state.rallies, playMs)}
+                      distanceRows={names.map((name, i) => ({ name, color: colorOf(i), metres: snap?.dist[i] ?? null }))}
+                      shuttle={snap?.shuttle ?? null}
+                      mapTop={10}
+                    />
+                  </View>
+                )}
+              </View>
+            );
+          })()}
+        </>
+      ) : match.videoUri ? (
         <VideoView player={player} style={s.video} nativeControls contentFit="contain" />
       ) : (
         <Card><Text style={s.muted}>No video was saved for this match.</Text></Card>
@@ -86,6 +139,7 @@ export default function MatchReview() {
 }
 
 const s = StyleSheet.create({
+  toggle: { color: colors.accent, fontSize: 13, fontWeight: '600' },
   back: { color: colors.muted, fontSize: 16 },
   title: { color: colors.text, fontSize: 28, fontWeight: '700' },
   muted: { color: colors.muted, fontSize: 13 },

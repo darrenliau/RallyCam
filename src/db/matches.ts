@@ -1,3 +1,4 @@
+import type { OverlayData } from '../analysis/overlay';
 import { replay } from '../engine/scoring';
 import type { MatchConfig, MatchState, Rally, Side } from '../engine/types';
 import { getDb } from './db';
@@ -129,4 +130,15 @@ export async function purgeEmptyMatches(): Promise<void> {
   await db.runAsync(
     "DELETE FROM matches WHERE status = 'live' AND NOT EXISTS (SELECT 1 FROM rallies r WHERE r.match_id = matches.id)",
   );
+}
+
+export async function saveOverlay(matchId: string, data: OverlayData): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('INSERT OR REPLACE INTO overlays (match_id, data) VALUES (?, ?)', matchId, JSON.stringify(data));
+}
+
+export async function getOverlay(matchId: string): Promise<OverlayData | null> {
+  const db = await getDb();
+  const row = await db.getFirstAsync<{ data: string }>('SELECT data FROM overlays WHERE match_id = ?', matchId);
+  return row ? (JSON.parse(row.data) as OverlayData) : null;
 }

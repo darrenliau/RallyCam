@@ -8,18 +8,18 @@ import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
 import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
+import { cornersToFrame, type OverlaySnapshot } from '../analysis/overlay';
 import { roiFromCorners } from '../analysis/preprocess';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
 import { SimulatedShuttle, type ShuttleStats } from '../analysis/shuttle';
 import { DetectorPlayerTracker } from '../analysis/tracker';
 import { CourtAligner } from '../components/CourtAligner';
-import { PlayerOverlay, type TagInfo } from '../components/PlayerOverlay';
-import { CourtMapCard, DistanceCard, ShuttleCards } from '../components/StatCards';
+import { MatchOverlay } from '../components/MatchOverlay';
+import type { TagInfo } from '../components/PlayerOverlay';
 import { RecorderView, isExpoGo } from '../camera/RecorderView';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
-import { ScoreBoard } from '../components/ScoreBoard';
-import { createMatch, finishMatch, saveRallies } from '../db/matches';
+import { createMatch, finishMatch, saveOverlay, saveRallies } from '../db/matches';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { addRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
@@ -195,6 +195,28 @@ export default function Record() {
     recorder.current?.start().catch((e: Error) => setRecError(e.message));
   }, [cameraReady, aligning, venueLoaded]);
 
+  // Save what the overlay shows, about four times a second, so the review can draw it over the video again.
+  const snapshots = useRef<OverlaySnapshot[]>([]);
+  const latest = useRef({ tracks, shuttle, tracking: false });
+  latest.current = { tracks, shuttle, tracking: !isExpoGo || simulating };
+  useEffect(() => {
+    if (!recording) return;
+    const id = setInterval(() => {
+      const { tracks: tr, shuttle: sh, tracking } = latest.current;
+      if (!tr.length && !sh) return;
+      const r1 = (n: number) => Math.round(n * 10) / 10;
+      const r3 = (n: number) => Math.round(n * 1000) / 1000;
+      snapshots.current.push({
+        t: Date.now() - startedAt.current,
+        tracks: tr.map((x) => ({ id: x.id, u: r3(x.u), v: r3(x.v), ...(x.lost ? { lost: x.lost } : {}) })),
+        assign: [...assignRef.current],
+        dist: names.map((_, i) => (tracking ? r1(meter.metres(i)) : null)),
+        ...(sh ? { shuttle: sh } : {}),
+      });
+    }, 250);
+    return () => clearInterval(id);
+  }, [recording, names, meter]);
+
   const persist = useCallback(async (next: MatchState) => {
     setState(next);
     await saveRallies(await getMatchId(), next.rallies);
@@ -220,6 +242,14 @@ export default function Record() {
     setEnding(true);
     const uri = await recorder.current?.stop().catch(() => undefined);
     const id = await getMatchId();
+    if (recordingStarted.current) {
+      await saveOverlay(id, {
+        version: 1,
+        frameAspect: FRAME_ASPECT,
+        corners: cornersToFrame(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height }),
+        snapshots: snapshots.current,
+      });
+    }
     await finishMatch(id, uri ?? null, startedAt.current ? Date.now() - startedAt.current : 0);
     router.replace(`/match/${id}`);
   };
@@ -250,7 +280,6 @@ export default function Record() {
   const R = insets.right + 12;
   const T = insets.top + 8;
   const B = insets.bottom + 12;
-  const boardW = Math.min(360, width - 2 * (L + 170));
   const lowFps = fps != null && fps < 60;
 
   return (
@@ -263,10 +292,25 @@ export default function Record() {
         onFps={setFps}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
       />
-      {!venueLoaded ? null : aligning ? (
+      {!venueLoaded ? null : aligning && (
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
-      ) : (
-        <PlayerOverlay map={map} width={width} height={height} tracks={tracks} tagFor={tagFor} selected={selected} onTagPress={onTagPress} />
+      )}
+      {venueLoaded && (
+        <MatchOverlay
+          width={width}
+          height={height}
+          inset={{ l: L, r: R, t: T, b: B }}
+          map={map}
+          tracks={tracks}
+          tagFor={tagFor}
+          selected={selected}
+          onTagPress={onTagPress}
+          state={state}
+          distanceRows={names.map((name, i) => ({ name, color: colorOf(i), metres: isExpoGo && !simulating ? null : meter.metres(i) }))}
+          shuttle={shuttle}
+          scoreOnly={aligning}
+          mapTop={T + 40}
+        />
       )}
 
       <View style={[s.chipRow, { left: L, top: T }]} pointerEvents="box-none">
@@ -287,20 +331,10 @@ export default function Record() {
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
 
-      <View style={{ position: 'absolute', top: T, left: (width - boardW) / 2, width: boardW }} pointerEvents="none">
-        <ScoreBoard state={state} />
-      </View>
-
       {(recError || lowFps) && (
         <Text style={[s.err, { top: T + 96, left: (width - 360) / 2, width: 360 }, !recError && { backgroundColor: 'rgba(160,110,20,0.9)' }]}>
           {recError ? `Recording failed: ${recError}` : `Only ${fps} fps on this phone. Fast shots will blur, so tracking will be less accurate.`}
         </Text>
-      )}
-
-      {!aligning && (
-        <View style={{ position: 'absolute', top: T, right: R }} pointerEvents="none">
-          <ShuttleCards stats={shuttle} />
-        </View>
       )}
 
       {__DEV__ && !aligning && (
@@ -312,17 +346,6 @@ export default function Record() {
           </View>
           <Button kind="ghost" label={simulating ? 'Stop simulation' : 'Simulate players'} onPress={toggleSimulation} style={s.devBtn} />
         </View>
-      )}
-
-      {!aligning && (
-        <>
-          <View style={{ position: 'absolute', left: L, top: T + 40 }} pointerEvents="none">
-            <CourtMapCard tracks={tracks} tagFor={tagFor} />
-          </View>
-          <View style={{ position: 'absolute', left: L, bottom: B }} pointerEvents="none">
-            <DistanceCard rows={names.map((name, i) => ({ name, color: colorOf(i), metres: isExpoGo && !simulating ? null : meter.metres(i) }))} />
-          </View>
-        </>
       )}
 
       {venueLoaded && aligning && (

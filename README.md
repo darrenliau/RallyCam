@@ -10,6 +10,7 @@ Badminton match recorder and tracker. React Native (Expo SDK 58, TypeScript, Exp
 - **Venues:** name a venue on the New match screen. The court alignment you lock during a match is saved to it, so the next match there starts already aligned. Saved as fractions of the screen, so it survives restarts. If you open it on a phone with a different screen shape, the app asks you to check the dots again.
 - **Shuttle speed and shot count cards:** show dashes ("needs shuttle tracking") until a shuttle tracker exists. In debug builds, "Simulate players" also feeds made-up values so you can see the layout.
 - **Court alignment and player tags:** drag four corners onto the court, then each tracked player gets a ring, a name tag (tap two tags to swap), a distance total and a court-map dot. Needs a tracker to feed it (see below).
+- **Overlay replay:** while recording, the overlay data (player positions, tags, distances, shuttle speed and shot labels) is saved about four times a second. The score comes from the saved points. The Review screen draws the same overlay over the video, in step with playback, with an on/off switch. The video file itself is not changed, so the overlay is not inside the .mp4 if you share it outside the app (see below).
 - **Review:** video, score chart per game, every point, change who won a point.
 
 ## Not built yet
@@ -99,3 +100,10 @@ The Python script has not been run against real weights from the build environme
 7. First launch: Settings > General > VPN & Device Management, trust your developer profile.
 8. `npx expo start --dev-client` and open the app. A free account's install lasts 7 days, then run it again from Xcode.
 If the free team says the bundle ID is unavailable, change `ios.bundleIdentifier` in `app.json` to something unique, then run `npx expo prebuild --platform ios --clean`.
+
+## Overlay inside the video file (not built yet)
+Today the overlay is drawn over the video by the app. To bake it into an exported .mp4, the saved overlay data has to be rendered onto the video frames by a native encoder. Routes, none tried:
+- Draw each overlay state to an image (react-native-view-shot) and composite with a video library. Overlay changes about four times a second, so about 4 images per second of video.
+- Generate ASS subtitles from the overlay data (score, speed and shot text are plain text, the court map can be vector drawings) and burn them in with an ffmpeg build that includes libass. ffmpeg-kit was retired upstream, so this needs a maintained fork.
+- AVFoundation (iOS) and MediaCodec/OpenGL (Android) native modules that draw the overlay while re-encoding.
+Any of these needs a development build and a re-encode, which takes time and quality on a 120 fps clip. Decide what resolution and frame rate the exported file should have first.
