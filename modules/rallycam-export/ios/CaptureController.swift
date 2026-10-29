@@ -107,6 +107,9 @@ final class CaptureController: NSObject {
   private var failed = 0
   private var lastVideoPts = -Double.infinity   // the writer rejects frames that go back in time
   private var lastAudioPts = -Double.infinity   // guarded by audioLock
+  private var audioRejected = 0                  // guarded by audioLock
+  private var videoWritten = 0
+  private var firstPts = 0.0
   private var composited = 0
   private var withOverlay = 0
   private var lastProblem = ""
@@ -672,7 +675,9 @@ final class CaptureController: NSObject {
       audioOpen = audio != nil
       audioLock.unlock()
       lastVideoPts = -Double.infinity
-      audioLock.lock(); lastAudioPts = -Double.infinity; audioLock.unlock()
+      videoWritten = 0
+      firstPts = CMTimeGetSeconds(firstTime)
+      audioLock.lock(); lastAudioPts = -Double.infinity; audioRejected = 0; audioLock.unlock()
       state = .recording
     } catch {
       state = .idle
@@ -697,14 +702,16 @@ final class CaptureController: NSObject {
     }
     ciContext.render(image, to: target)
     let ok = adaptor.append(target, withPresentationTime: time)
-    if ok { lastVideoPts = CMTimeGetSeconds(time) }
+    if ok { lastVideoPts = CMTimeGetSeconds(time); videoWritten += 1 }
     bump {
       if ok { composited += 1; if overlay != nil { withOverlay += 1 } } else { lastProblem = "a video frame could not be written" }
     }
     if !ok, let w = writer, w.status == .failed {
       // Most often the phone is out of space. Stop writing and tell the user, instead of pretending to record.
       state = .idle
-      let detail = CaptureController.describe(w.error)
+      audioLock.lock(); let aPts = lastAudioPts; let aBad = audioRejected; audioLock.unlock()
+      let context = String(format: "after %.1fs, %d frames, last video %.2fs, last audio %.2fs, audio refused %d", lastVideoPts - firstPts, videoWritten, lastVideoPts - firstPts, aPts - firstPts, aBad)
+      let detail = CaptureController.describe(w.error) + ", " + context
       NSLog("RallyCam: writer failed: \(detail)")
       onError?("The video stopped saving (\(detail)). The score is still kept.")
     }
@@ -800,7 +807,9 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
       if CMTimeCompare(audioPts, sessionStart) < 0 { return }
       // one out-of-order audio buffer fails the whole file, so skip it
       if CMTimeGetSeconds(audioPts) <= lastAudioPts { return }
-      if writer?.status == .writing, input.append(sampleBuffer) { lastAudioPts = CMTimeGetSeconds(audioPts) }
+      if writer?.status == .writing {
+        if input.append(sampleBuffer) { lastAudioPts = CMTimeGetSeconds(audioPts) } else { audioRejected += 1 }
+      }
       return
     }
 
