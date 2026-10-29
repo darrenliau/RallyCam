@@ -3,7 +3,7 @@
 Badminton match recorder and tracker. React Native (Expo SDK 58, TypeScript, Expo Router).
 
 ## What works now
-- **Match setup:** singles or doubles, best of 3 or one game, player names.
+- **Match setup:** singles or doubles and player names. One game per recording: it stops by itself when someone wins (21, win by 2, cap 30). The engine still supports best of 3.
 - **Recording:** landscape, asks the camera for 120 fps with stabilisation off (react-native-vision-camera), screen kept awake, video saved with the match. The chip on the Record screen shows the frame rate the phone actually gave. Below 60 fps it warns you.
 - **Scoring engine** (`src/engine`): pure TypeScript, unit tested. 21 points, win by 2, cap at 30, serve court and doubles court swapping, undo, fix any earlier point and re-score.
 - **Storage:** local SQLite (`src/db`). Matches and rallies. Nothing leaves the phone.

@@ -39,7 +39,6 @@ function Field({ color, value, onChange, label }: { color: string; value: string
 export default function NewMatch() {
   const insets = useSafeAreaInsets();
   const [type, setType] = useState<MatchType>('singles');
-  const [bestOf, setBestOf] = useState<1 | 3>(3);
   const [a, setA] = useState(['You', 'Mia']);
   const [b, setB] = useState(['Sam', 'Jun']);
   const [venues, setVenues] = useState<Venue[]>([]);
@@ -74,7 +73,7 @@ export default function NewMatch() {
   };
   const removeVenue = () => {
     if (!venue) return;
-    Alert.alert(`Delete ${venue.name}?`, 'Its saved court alignment is removed. Past matches stay.', [
+    Alert.alert(`Delete ${venue.name}?`, 'Its saved court alignment is removed. Past games stay.', [
       { text: 'Cancel', style: 'cancel' },
       { text: 'Delete', style: 'destructive', onPress: async () => { await deleteVenue(venue.id); setVenues((l) => l.filter((v) => v.id !== venue.id)); pick(null); } },
     ]);
@@ -86,7 +85,7 @@ export default function NewMatch() {
   const start = async () => {
     if (venueId) await touchVenue(venueId);
     const config: MatchConfig = {
-      type, bestOf, firstServer: 'A',
+      type, bestOf: 1, firstServer: 'A', // one game: the recording stops when someone wins it
       players: { A: clean(a, ['You', 'Mia']), B: clean(b, ['Sam', 'Jun']) },
     };
     router.push({ pathname: '/record', params: { config: JSON.stringify(config), ...(venueId ? { venueId } : {}) } });
@@ -96,9 +95,8 @@ export default function NewMatch() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 24, gap: 12 }}>
-        <Text style={s.title}>New match</Text>
+        <Text style={s.title}>New game</Text>
         <Segmented value={type} onChange={setType} options={[{ label: 'Singles', value: 'singles' }, { label: 'Doubles', value: 'doubles' }]} />
-        <Segmented value={bestOf} onChange={setBestOf} options={[{ label: 'One game', value: 1 }, { label: 'Best of 3', value: 3 }]} />
         <Card style={{ gap: 8 }}>
           <Label>Near side · closest to the camera</Label>
           {Array.from({ length: n }, (_, i) => (
@@ -130,12 +128,13 @@ export default function NewMatch() {
                 <TextInput accessibilityLabel="Venue name" value={editName ?? venue.name} onChangeText={setEditName} onEndEditing={saveName} maxLength={30} style={s.input} />
                 <Pressable accessibilityRole="button" onPress={removeVenue}><Text style={[s.link, { color: colors.red }]}>Delete</Text></Pressable>
               </View>
-              <Text style={s.hint}>{venue.corners ? 'Court alignment saved. The camera will start with it locked.' : 'No court alignment yet. Align it once during your next match and it is saved here.'}</Text>
+              <Text style={s.hint}>{venue.corners ? 'Court alignment saved. The camera will start with it locked.' : 'No court alignment yet. Align it once during your next game and it is saved here.'}</Text>
             </>
           )}
         </Card>
         <Text style={s.hint}>Put the phone on a tripod behind the near baseline, so all four court corners are in view.</Text>
-        <Button label="Start match" onPress={start} />
+        <Text style={s.hint}>First to 21 wins, by 2 points, up to 30. Recording stops by itself when the game is won.</Text>
+        <Button label="Start game" onPress={start} />
       </ScrollView>
     </KeyboardAvoidingView>
   );

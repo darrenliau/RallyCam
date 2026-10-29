@@ -24,11 +24,11 @@ export default function Stats() {
     <ScrollView contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 24, gap: 10 }}>
       <Text style={s.title}>Stats</Text>
       {matches.length === 0 ? (
-        <Card><Text style={s.muted}>Play a match and your numbers show up here.</Text></Card>
+        <Card><Text style={s.muted}>Play a game and your numbers show up here.</Text></Card>
       ) : (
         <>
           <View style={s.row}>
-            <Stat value={String(matches.length)} label="matches" />
+            <Stat value={String(matches.length)} label="games" />
             <Stat value={`${wins}–${done.length - wins}`} label="win / loss" />
           </View>
           <View style={s.row}>

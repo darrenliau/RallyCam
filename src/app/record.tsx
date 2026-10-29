@@ -20,8 +20,8 @@ import { Button } from '../components/ui';
 import { ScoreBoard } from '../components/ScoreBoard';
 import { createMatch, finishMatch, saveRallies } from '../db/matches';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
-import { addRally, newMatch, undoLast } from '../engine/scoring';
-import { formatClock } from '../engine/format';
+import { addRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
+import { formatClock, resultLine } from '../engine/format';
 import type { MatchConfig, MatchState, Side } from '../engine/types';
 import { colors } from '../theme';
 
@@ -197,13 +197,26 @@ export default function Record() {
 
   const onUndo = () => persist(undoLast(state));
 
+  const endingRef = useRef(false);
   const endMatch = async () => {
+    if (endingRef.current) return;
+    endingRef.current = true;
     setEnding(true);
     const uri = await recorder.current?.stop().catch(() => undefined);
     const id = await getMatchId();
     await finishMatch(id, uri ?? null, Date.now() - startedAt.current);
     router.replace(`/match/${id}`);
   };
+
+  // A game is over at 21 (win by 2, capped at 30). Stop recording a moment later so the final score is seen.
+  // Fix last point cancels this, because the game is no longer won.
+  useEffect(() => {
+    if (!state.matchWinner) return;
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    const t = setTimeout(() => { endMatch(); }, 2500);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state.matchWinner]);
 
   if (!camPerm || !micPerm) return <View style={s.fill} />;
   if (!camPerm.granted || !micPerm.granted) {
@@ -300,9 +313,18 @@ export default function Record() {
         </View>
       )}
 
+      {state.matchWinner && (
+        <View style={s.gameOver} pointerEvents="none">
+          <Text style={s.gameOverTitle}>Game over</Text>
+          <Text style={s.gameOverText}>
+            {sideLabel(state.config, state.matchWinner)} wins {resultLine(state)}. Saving the video…
+          </Text>
+        </View>
+      )}
+
       <View style={[s.actions, { right: R, bottom: B }]}>
         <Button kind="ghost" label="Fix last point" onPress={onUndo} disabled={state.rallies.length === 0} />
-        <Button label={state.matchWinner ? 'Finish' : 'End match'} onPress={endMatch} disabled={ending} />
+        <Button label={state.matchWinner ? 'Finish now' : 'End game'} onPress={endMatch} disabled={ending} />
       </View>
     </View>
   );
@@ -324,5 +346,8 @@ const s = StyleSheet.create({
   dev: { position: 'absolute', width: 210, backgroundColor: 'rgba(5,9,10,0.7)', borderRadius: 12, padding: 8, gap: 6 },
   devText: { color: '#C8F04A', fontSize: 11 },
   devBtn: { flex: 1, minHeight: 36 },
+  gameOver: { position: 'absolute', alignSelf: 'center', top: '38%', backgroundColor: 'rgba(5,9,10,0.9)', borderRadius: 16, paddingHorizontal: 24, paddingVertical: 14, alignItems: 'center' },
+  gameOverTitle: { color: '#fff', fontSize: 26, fontWeight: '700' },
+  gameOverText: { color: '#C6D3CC', fontSize: 14, marginTop: 4 },
   actions: { position: 'absolute', width: 160, gap: 8 },
 });

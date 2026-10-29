@@ -19,7 +19,7 @@ export function ScoreBoard({ state }: { state: MatchState }) {
         <Side name={B.join(' & ')} score={g.B} games={multi ? w.B : undefined} serving={serving === 'B'} align="right" />
       </View>
       <Text style={s.server}>
-        {state.matchWinner ? 'Match over' : `${serverName(state)} serves from the ${state.serve.court} court`}
+        {state.matchWinner ? 'Game over' : `${serverName(state)} serves from the ${state.serve.court} court`}
       </Text>
     </View>
   );

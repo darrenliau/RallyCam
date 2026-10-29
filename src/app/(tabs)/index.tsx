@@ -20,23 +20,23 @@ export default function Matches() {
       </View>
       {matches === null ? null : matches.length === 0 ? (
         <Card>
-          <Text style={s.emptyTitle}>No matches yet</Text>
-          <Text style={s.muted}>Set the phone on a tripod behind the court, then start a match. The score is kept for you.</Text>
+          <Text style={s.emptyTitle}>No games yet</Text>
+          <Text style={s.muted}>Set the phone on a tripod behind the court, then start a game. The score is kept for you, and recording stops when someone reaches 21.</Text>
         </Card>
       ) : (
         <>
-          <Label>Recent</Label>
+          <Label>Recent games</Label>
           {matches.map((m) => (
             <Pressable key={m.id} onPress={() => router.push(`/match/${m.id}`)}>
               <Card style={s.row}>
                 <View style={{ flex: 1 }}>
                   <Text style={s.name}>{describeMatch(m.state)}</Text>
                   <Text style={s.muted}>
-                    {new Date(m.createdAt).toLocaleDateString()} · {m.state.config.type}{m.venueName ? ` · ${m.venueName}` : ''}
+                    {new Date(m.createdAt).toLocaleDateString()} · {m.state.matchWinner ? 'Game' : 'Unfinished game'} · {m.state.config.type}{m.venueName ? ` · ${m.venueName}` : ''}
                     {m.durationMs ? ` · ${formatClock(m.durationMs)}` : ''}
                   </Text>
                 </View>
-                <Text style={[s.result, { color: m.state.matchWinner === 'B' ? colors.red : colors.green }]}>{resultLine(m.state)}</Text>
+                <Text style={[s.result, { color: m.state.matchWinner === 'A' ? colors.green : m.state.matchWinner === 'B' ? colors.red : colors.muted }]}>{resultLine(m.state)}</Text>
               </Card>
             </Pressable>
           ))}

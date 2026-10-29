@@ -80,7 +80,7 @@ export default function MatchReview() {
           </Card>
         );
       })}
-      <Button kind="ghost" label="Delete match" onPress={remove} />
+      <Button kind="ghost" label="Delete game" onPress={remove} />
     </ScrollView>
   );
 }
