@@ -15,7 +15,7 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   startRecording(uri: string, outputFps: number): void;
   stopRecording(): Promise<string | null>;
   setOverlay(json: string): void;
-  getStatus(): { overlayPushes: number; overlayDecoded: number; overlayFailed: number; framesWritten: number; framesWithOverlay: number; lastProblem: string };
+  getStatus(): { overlayPushes: number; overlayDecoded: number; overlayFailed: number; framesWritten: number; framesWithOverlay: number; lastProblem: string; lens: string };
   setDetection(enabled: boolean, x: number, y: number, w: number, h: number): void;
 }
 

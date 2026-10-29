@@ -228,7 +228,7 @@ export default function Record() {
     const id = setInterval(() => {
       if (usesNativeCapture && Capture) {
         const st = Capture.getStatus();
-        setDiag(`native camera · pushed ${st.overlayPushes}, drawn ${st.overlayDecoded}, failed ${st.overlayFailed} · frames ${st.framesWritten}, with overlay ${st.framesWithOverlay}${st.lastProblem ? ` · ${st.lastProblem}` : ''}`);
+        setDiag(`native camera (${st.lens}) · pushed ${st.overlayPushes}, drawn ${st.overlayDecoded}, failed ${st.overlayFailed} · frames ${st.framesWritten}, with overlay ${st.framesWithOverlay}${st.lastProblem ? ` · ${st.lastProblem}` : ''}`);
       } else {
         setDiag(isExpoGo ? 'Expo Go camera (overlay is not drawn into the video)' : 'vision-camera (overlay is drawn after the game)');
       }

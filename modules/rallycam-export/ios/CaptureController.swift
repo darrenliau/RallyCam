@@ -86,6 +86,7 @@ final class CaptureController: NSObject {
   private var composited = 0
   private var withOverlay = 0
   private var lastProblem = ""
+  private var lens = ""
 
   private func bump(_ change: () -> Void) {
     statsLock.lock()
@@ -103,6 +104,7 @@ final class CaptureController: NSObject {
       "framesWritten": composited,
       "framesWithOverlay": withOverlay,
       "lastProblem": lastProblem,
+      "lens": lens,
     ]
   }
 
@@ -127,13 +129,8 @@ final class CaptureController: NSObject {
     return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight)
   }
 
-  /// Sets up the camera, microphone and outputs. Returns the frame rate the camera will really run at.
-  private func configure(targetFps: Int) throws -> Int {
-    guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { throw CaptureError.notAuthorized("Camera") }
-    let micAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
-    guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .back) else { throw CaptureError.noCamera }
-
-    // Pick a 1080p format that can run at the wanted frame rate (120 where the phone has it).
+  /// The best 1080p format of a camera for the wanted frame rate, and the rate it can really do.
+  private func bestFormat(of device: AVCaptureDevice, targetFps: Int) -> (format: AVCaptureDevice.Format, fps: Int)? {
     var best: (format: AVCaptureDevice.Format, fps: Int)?
     for format in device.formats {
       let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
@@ -143,7 +140,23 @@ final class CaptureController: NSObject {
       let achievable = min(maxFps, targetFps)
       if best == nil || achievable > best!.fps { best = (format, achievable) }
     }
-    guard let chosen = best else { throw CaptureError.setup("no 1080p format") }
+    return best
+  }
+
+  /// Sets up the camera, microphone and outputs. Returns the frame rate the camera will really run at.
+  private func configure(targetFps: Int) throws -> Int {
+    guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { throw CaptureError.notAuthorized("Camera") }
+    let micAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
+
+    // The ultra-wide camera (0.5x) sees more of the court from close range. The listed order is the preference: it
+    // wins unless the main camera can run at a higher frame rate.
+    var chosen: (device: AVCaptureDevice, format: AVCaptureDevice.Format, fps: Int, lens: String)?
+    for (type, name) in [(AVCaptureDevice.DeviceType.builtInUltraWideCamera, "ultra-wide"), (.builtInWideAngleCamera, "wide")] {
+      guard let device = AVCaptureDevice.default(type, for: .video, position: .back), let pick = bestFormat(of: device, targetFps: targetFps) else { continue }
+      if chosen == nil || pick.fps > chosen!.fps { chosen = (device, pick.format, pick.fps, name) }
+    }
+    guard let chosen else { throw CaptureError.noCamera }
+    let device = chosen.device
 
     session.beginConfiguration()
     defer { session.commitConfiguration() }
@@ -173,6 +186,8 @@ final class CaptureController: NSObject {
       let duration = CMTime(value: 1, timescale: CMTimeScale(chosen.fps))
       device.activeVideoMinFrameDuration = duration
       device.activeVideoMaxFrameDuration = duration
+      // Straight court lines matter for the court mapping. The ultra-wide camera bends them unless this is on.
+      if device.isGeometricDistortionCorrectionSupported { device.isGeometricDistortionCorrectionEnabled = true }
       device.unlockForConfiguration()
     } catch {
       throw CaptureError.setup(error.localizedDescription)
@@ -183,12 +198,21 @@ final class CaptureController: NSObject {
       connection.videoOrientation = CaptureController.currentVideoOrientation()
       if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .off }
     }
+    statsLock.lock()
+    lens = chosen.lens
+    statsLock.unlock()
     return chosen.fps
   }
 
   func stop(completion: @escaping () -> Void) {
     sessionQueue.async {
       if self.session.isRunning { self.session.stopRunning() }
+      // Remove everything, so the next start chooses the camera again and sets up from scratch.
+      self.session.beginConfiguration()
+      for input in self.session.inputs { self.session.removeInput(input) }
+      for output in self.session.outputs { self.session.removeOutput(output) }
+      self.session.commitConfiguration()
+      self.configured = false
       completion()
     }
   }

@@ -1,6 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef } from 'react';
 import { useTensorflowModel } from 'react-native-fast-tflite';
-import { Camera, CommonResolutions, useFrameOutput, useVideoOutput, type Frame, type Recorder } from 'react-native-vision-camera';
+import { Camera, CommonResolutions, useCameraDevice, useFrameOutput, useVideoOutput, type Frame, type Recorder } from 'react-native-vision-camera';
 import { scheduleOnRN } from 'react-native-worklets';
 import { cropResizeRgb, decodeDetections, rgbLayoutFor } from '../analysis/preprocess';
 import type { RecorderHandle, RecorderProps } from './types';
@@ -23,6 +23,9 @@ const sameShape = (a: number[], b: number[]) => a.length === b.length && a.every
  * detection on a second output. Needs a development build.
  */
 const VisionRecorder = forwardRef<RecorderHandle, RecorderProps>(function VisionRecorder({ style, onReady, onError, onFps, detection }, ref) {
+  // The ultra-wide camera sees more of the court from close range. Phones without one use the main camera.
+  const ultraWide = useCameraDevice('back', { physicalDevices: ['ultra-wide-angle'] });
+  const device = ultraWide?.type === 'ultra-wide-angle' ? ultraWide : 'back';
   const video = useVideoOutput({ targetResolution: CommonResolutions.FHD_16_9, enableAudio: true });
   const recorder = useRef<Recorder | null>(null);
   const finished = useRef<((uri?: string) => void) | null>(null);
@@ -104,7 +107,7 @@ const VisionRecorder = forwardRef<RecorderHandle, RecorderProps>(function Vision
   return (
     <Camera
       style={style}
-      device="back"
+      device={device}
       isActive
       resizeMode="cover"
       outputs={wantDetection ? [video, frameOutput] : [video]}
