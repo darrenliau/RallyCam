@@ -15,6 +15,7 @@ interface MatchRow {
   status: 'live' | 'done';
   venue_id: string | null;
   venue_name: string | null;
+  overlay_video_uri: string | null;
 }
 
 interface RallyRow {
@@ -32,6 +33,8 @@ export interface MatchRecord {
   id: string;
   createdAt: number;
   videoUri: string | null;
+  /** The video with the overlay drawn into it, once it has been exported. */
+  overlayVideoUri: string | null;
   durationMs: number | null;
   status: 'live' | 'done';
   venueName: string | null;
@@ -60,6 +63,7 @@ function toRecord(m: MatchRow, rallies: RallyRow[]): MatchRecord {
     id: m.id,
     createdAt: m.created_at,
     videoUri: m.video_uri,
+    overlayVideoUri: m.overlay_video_uri,
     durationMs: m.duration_ms,
     status: m.status,
     venueName: m.venue_name,
@@ -95,6 +99,11 @@ export async function saveRallies(matchId: string, rallies: Rally[]): Promise<vo
 export async function finishMatch(matchId: string, videoUri: string | null, durationMs: number): Promise<void> {
   const db = await getDb();
   await db.runAsync("UPDATE matches SET status = 'done', video_uri = ?, duration_ms = ? WHERE id = ?", videoUri, durationMs, matchId);
+}
+
+export async function setOverlayVideo(matchId: string, uri: string | null): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE matches SET overlay_video_uri = ? WHERE id = ?', uri, matchId);
 }
 
 export async function listMatches(): Promise<MatchRecord[]> {

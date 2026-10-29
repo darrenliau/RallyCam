@@ -62,5 +62,11 @@ async function open() {
       PRAGMA user_version = 2;
     `);
   }
+  if (version < 3) {
+    await db.execAsync(`
+      ALTER TABLE matches ADD COLUMN overlay_video_uri TEXT;
+      PRAGMA user_version = 3;
+    `);
+  }
   return db;
 }

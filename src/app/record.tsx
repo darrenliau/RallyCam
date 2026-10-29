@@ -20,6 +20,8 @@ import { RecorderView, isExpoGo } from '../camera/RecorderView';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
 import { createMatch, finishMatch, saveOverlay, saveRallies } from '../db/matches';
+import { canExportOnDevice } from '../export/nativeExport';
+import { extensionOf, keepFile } from '../export/storage';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { addRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
@@ -250,8 +252,10 @@ export default function Record() {
         snapshots: snapshots.current,
       });
     }
-    await finishMatch(id, uri ?? null, startedAt.current ? Date.now() - startedAt.current : 0);
-    router.replace(`/match/${id}`);
+    const kept = uri ? keepFile(uri, `${id}.${extensionOf(uri)}`) : null;
+    await finishMatch(id, kept, startedAt.current ? Date.now() - startedAt.current : 0);
+    // On an iPhone dev build the video with the overlay drawn in is made right away, so the game ends up as one video
+    router.replace({ pathname: '/match/[id]', params: { id, ...(kept && canExportOnDevice ? { export: '1' } : {}) } });
   };
 
   // A game is over at 21 (win by 2, capped at 30). Stop recording a moment later so the final score is seen.

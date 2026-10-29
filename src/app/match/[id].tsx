@@ -1,11 +1,11 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useVideoPlayer, VideoView } from 'expo-video';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners } from '../../analysis/court';
 import { cornersInBox, snapshotAt, stateAt, type OverlayData } from '../../analysis/overlay';
-import { deleteMatch, getMatch, getOverlay, saveRallies, type MatchRecord } from '../../db/matches';
+import { deleteMatch, getMatch, getOverlay, saveRallies, setOverlayVideo, type MatchRecord } from '../../db/matches';
 import { editRally, otherSide, sideLabel } from '../../engine/scoring';
 import { describeMatch, formatClock, gameScores, resultLine } from '../../engine/format';
 import { longestRun, progression, rallyStats } from '../../engine/stats';
@@ -14,18 +14,20 @@ import { MatchOverlay } from '../../components/MatchOverlay';
 import { buildAss } from '../../export/ass';
 import { cancelExport, canExportOnDevice, exportVideoWithOverlay } from '../../export/nativeExport';
 import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFiles';
+import { extensionOf, keepFile } from '../../export/storage';
 import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
 import { colors } from '../../theme';
 
 export default function MatchReview() {
   const insets = useSafeAreaInsets();
-  const { id } = useLocalSearchParams<{ id: string }>();
+  const { id, export: autoExport } = useLocalSearchParams<{ id: string; export?: string }>();
   const [match, setMatch] = useState<MatchRecord | null>(null);
   const reload = useCallback(() => { getMatch(id).then(setMatch); }, [id]);
   useEffect(reload, [reload]);
 
-  const player = useVideoPlayer(match?.videoUri ?? null);
+  // Once the overlay has been drawn into a new video, that is the one to play.
+  const player = useVideoPlayer(match?.overlayVideoUri ?? match?.videoUri ?? null);
 
   // The overlay saved while recording is drawn over the video again, in step with the playback time.
   const { width: screenW } = useWindowDimensions();
@@ -35,6 +37,40 @@ export default function MatchReview() {
   const [exporting, setExporting] = useState<number | null>(null); // null = not exporting, else 0..1
   const [exportError, setExportError] = useState<string | null>(null);
   useEffect(() => { getOverlay(id).then(setOverlay); }, [id]);
+
+  // Makes the video with the overlay drawn into it. Used by the button and, right after a game, automatically.
+  const startExport = useCallback(async (andShare: boolean) => {
+    if (!match?.videoUri || !overlay) return;
+    setExportError(null);
+    setExporting(0);
+    try {
+      const duration = match.durationMs ?? ((match.state.rallies[match.state.rallies.length - 1]?.endMs ?? 0) + 5000);
+      const made = await exportVideoWithOverlay({
+        videoUri: match.videoUri,
+        input: { config: match.state.config, rallies: match.state.rallies, overlay, durationMs: duration },
+        name: baseName(match.videoUri),
+        fps: 30,
+        onProgress: setExporting,
+      });
+      const kept = keepFile(made, `${match.id}-overlay.${extensionOf(made, 'mp4')}`);
+      await setOverlayVideo(match.id, kept);
+      setExporting(null);
+      reload();
+      if (andShare) await Sharing.shareAsync(kept, { mimeType: 'video/mp4', dialogTitle: 'Game video with overlay' });
+    } catch (e) {
+      setExporting(null);
+      const message = e instanceof Error ? e.message : String(e);
+      if (!message.includes('cancelled')) setExportError(message);
+    }
+  }, [match, overlay, reload]);
+
+  const autoStarted = useRef(false);
+  useEffect(() => {
+    if (autoExport === '1' && canExportOnDevice && match?.videoUri && overlay && !match.overlayVideoUri && exporting === null && !autoStarted.current) {
+      autoStarted.current = true;
+      startExport(false);
+    }
+  }, [autoExport, match, overlay, exporting, startExport]);
   useEffect(() => {
     const timer = setInterval(() => setPlayMs(player.currentTime * 1000), 200);
     return () => clearInterval(timer);
@@ -63,7 +99,7 @@ export default function MatchReview() {
         <Text style={s.muted}>{new Date(match.createdAt).toLocaleString()}{match.venueName ? ` · ${match.venueName}` : ''} · {resultLine(state)} {state.config.bestOf > 1 ? `(${gameScores(state)})` : ''}</Text>
       </View>
 
-      {match.videoUri && overlay ? (
+      {match.videoUri && overlay && !match.overlayVideoUri ? (
         <>
           <Pressable onPress={() => setShowOverlay((v) => !v)} accessibilityRole="button">
             <Text style={s.toggle}>Overlay: {showOverlay ? 'on' : 'off'} (tap to switch)</Text>
@@ -103,49 +139,33 @@ export default function MatchReview() {
           })()}
         </>
       ) : match.videoUri ? (
-        <VideoView player={player} style={s.video} nativeControls contentFit="contain" />
+        <VideoView player={player} style={overlay ? { width: screenW - 32, aspectRatio: overlay.frameAspect, borderRadius: 14, backgroundColor: '#000' } : s.video} nativeControls contentFit="contain" />
       ) : (
         <Card><Text style={s.muted}>No video was saved for this match.</Text></Card>
       )}
 
       {match.videoUri && overlay && canExportOnDevice && (
         <Card style={{ gap: 8 }}>
-          <Label>Save a video with the overlay</Label>
-          <Text style={s.muted}>
-            Makes a new 30 frames per second video with the overlay drawn on it. Keep the app open while it works. A long game takes a few minutes.
-          </Text>
-          {exporting == null ? (
-            <Button
-              label="Save video with overlay"
-              onPress={async () => {
-                setExportError(null);
-                setExporting(0);
-                try {
-                  const duration = match.durationMs ?? ((state.rallies[state.rallies.length - 1]?.endMs ?? 0) + 5000);
-                  const uri = await exportVideoWithOverlay({
-                    videoUri: match.videoUri!,
-                    input: { config: state.config, rallies: state.rallies, overlay, durationMs: duration },
-                    name: baseName(match.videoUri!),
-                    fps: 30,
-                    onProgress: setExporting,
-                  });
-                  setExporting(null);
-                  await Sharing.shareAsync(uri, { mimeType: 'video/mp4', dialogTitle: 'Game video with overlay' });
-                } catch (e) {
-                  setExporting(null);
-                  const message = e instanceof Error ? e.message : String(e);
-                  if (!message.includes('cancelled')) setExportError(message);
-                }
-              }}
-            />
-          ) : (
+          <Label>Video with the overlay</Label>
+          {exporting != null ? (
             <>
+              <Text style={s.muted}>Drawing the overlay into the video. Keep the app open. A long game takes a few minutes.</Text>
               <View style={s.barBack}><View style={[s.barFill, { width: `${Math.round(exporting * 100)}%` }]} /></View>
-              <Text style={s.muted}>Exporting… {Math.round(exporting * 100)}%</Text>
+              <Text style={s.muted}>{Math.round(exporting * 100)}%</Text>
               <Button kind="ghost" label="Cancel" onPress={() => cancelExport()} />
             </>
+          ) : match.overlayVideoUri ? (
+            <>
+              <Text style={s.muted}>The overlay is part of this video. The original video without it is kept too.</Text>
+              <Button label="Share video with overlay" onPress={() => Sharing.shareAsync(match.overlayVideoUri!, { mimeType: 'video/mp4', dialogTitle: 'Game video with overlay' }).catch(() => {})} />
+            </>
+          ) : (
+            <>
+              <Text style={s.muted}>Makes a new 30 frames per second video with the overlay drawn into it.</Text>
+              <Button label="Save video with overlay" onPress={() => startExport(true)} />
+            </>
           )}
-          {exportError && <Text style={[s.muted, { color: colors.red }]}>Export failed: {exportError}</Text>}
+          {exportError && <Text style={[s.muted, { color: colors.red }]}>Could not make it: {exportError}. The original video and the in-app overlay are still here.</Text>}
         </Card>
       )}
 
