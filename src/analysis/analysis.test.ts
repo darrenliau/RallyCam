@@ -22,6 +22,16 @@ describe('court mapping', () => {
     const nearHalf = map.toScreen(0.5, 1).y - map.toScreen(0.5, 0.5).y;
     expect(nearHalf).toBeGreaterThan(farHalf);
   });
+  it('works when the horizon passes exactly through the image origin', () => {
+    // These corners vanish at y = 0, which broke a solver that fixed one matrix entry to 1
+    const c = { farLeft: { x: 576, y: 432 }, farRight: { x: 1344, y: 432 }, nearRight: { x: 1824, y: 972 }, nearLeft: { x: 96, y: 972 } };
+    const m = courtMap(c);
+    const p = m.toScreen(0.3, 0.7);
+    const back = m.toCourt(p);
+    expect(back.u).toBeCloseTo(0.3, 6);
+    expect(back.v).toBeCloseTo(0.7, 6);
+    expect(m.toScreen(1, 1).x).toBeCloseTo(1824, 6);
+  });
   it('rejects collapsed corners', () => {
     const p = { x: 1, y: 1 };
     expect(() => courtMap({ farLeft: p, farRight: p, nearRight: p, nearLeft: p })).toThrow();

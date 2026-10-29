@@ -11,6 +11,8 @@ import { describeMatch, formatClock, gameScores, resultLine } from '../../engine
 import { longestRun, progression, rallyStats } from '../../engine/stats';
 import { Button, Card, Label, Stat } from '../../components/ui';
 import { MatchOverlay } from '../../components/MatchOverlay';
+import { buildAss } from '../../export/ass';
+import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFiles';
 import { ScoreChart } from '../../components/ScoreChart';
 import { colors } from '../../theme';
 
@@ -100,6 +102,29 @@ export default function MatchReview() {
         <VideoView player={player} style={s.video} nativeControls contentFit="contain" />
       ) : (
         <Card><Text style={s.muted}>No video was saved for this match.</Text></Card>
+      )}
+
+      {match.videoUri && overlay && (
+        <Card style={{ gap: 8 }}>
+          <Label>Share with the overlay</Label>
+          <Text style={s.muted}>
+            Send the video and the overlay file to a computer. Put them in one folder and open the video in VLC or IINA to see the overlay,
+            or burn it into a new video with tools/burn-overlay.sh.
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button kind="ghost" label="Share video" style={{ flex: 1 }} onPress={() => shareVideoFile(match.videoUri!).catch(() => {})} />
+            <Button
+              kind="ghost"
+              label="Share overlay"
+              style={{ flex: 1 }}
+              onPress={() => {
+                const duration = match.durationMs ?? ((state.rallies[state.rallies.length - 1]?.endMs ?? 0) + 5000);
+                const ass = buildAss({ config: state.config, rallies: state.rallies, overlay, durationMs: duration });
+                shareOverlayFile(baseName(match.videoUri!), ass).catch(() => {});
+              }}
+            />
+          </View>
+        </Card>
       )}
 
       <View style={s.row}>

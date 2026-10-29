@@ -5,34 +5,44 @@ export interface Corners { farLeft: Pt; farRight: Pt; nearRight: Pt; nearLeft: P
 export const COURT_W = 6.1;
 export const COURT_L = 13.4;
 
-/** Solve the 8 parameters of a perspective transform that sends each src point to its dst point. */
-function solve(src: Pt[], dst: Pt[]): number[] {
-  const m: number[][] = [];
-  for (let i = 0; i < 4; i++) {
-    const { x, y } = src[i];
-    const { x: X, y: Y } = dst[i];
-    m.push([x, y, 1, 0, 0, 0, -X * x, -X * y, X]);
-    m.push([0, 0, 0, x, y, 1, -Y * x, -Y * y, Y]);
+type Mat3 = number[]; // row-major 3x3
+
+/**
+ * The perspective transform that sends the unit square to the four corners (in order: 0,0  1,0  1,1  0,1).
+ * Uses the closed form for a square, which stays well behaved when the horizon passes through the image origin,
+ * where fixing one matrix entry to 1 (the usual shortcut) breaks.
+ */
+function squareToQuad(q: Pt[]): Mat3 {
+  const [p0, p1, p2, p3] = q;
+  const sx = p0.x - p1.x + p2.x - p3.x;
+  const sy = p0.y - p1.y + p2.y - p3.y;
+  const dx1 = p1.x - p2.x;
+  const dx2 = p3.x - p2.x;
+  const dy1 = p1.y - p2.y;
+  const dy2 = p3.y - p2.y;
+  const den = dx1 * dy2 - dx2 * dy1;
+  let g = 0;
+  let h = 0;
+  if (Math.abs(sx) > 1e-9 || Math.abs(sy) > 1e-9) {
+    if (Math.abs(den) < 1e-9) throw new Error('Court corners are degenerate');
+    g = (sx * dy2 - dx2 * sy) / den;
+    h = (dx1 * sy - sx * dy1) / den;
   }
-  for (let c = 0; c < 8; c++) {
-    let p = c;
-    for (let r = c + 1; r < 8; r++) if (Math.abs(m[r][c]) > Math.abs(m[p][c])) p = r;
-    [m[c], m[p]] = [m[p], m[c]];
-    const d = m[c][c];
-    if (Math.abs(d) < 1e-12) throw new Error('Court corners are degenerate');
-    for (let k = c; k < 9; k++) m[c][k] /= d;
-    for (let r = 0; r < 8; r++) {
-      if (r === c) continue;
-      const f = m[r][c];
-      for (let k = c; k < 9; k++) m[r][k] -= f * m[c][k];
-    }
-  }
-  return m.map((row) => row[8]);
+  const m = [p1.x - p0.x + g * p1.x, p3.x - p0.x + h * p3.x, p0.x, p1.y - p0.y + g * p1.y, p3.y - p0.y + h * p3.y, p0.y, g, h, 1];
+  const det = m[0] * (m[4] - m[5] * m[7]) - m[1] * (m[3] - m[5] * m[6]) + m[2] * (m[3] * m[7] - m[4] * m[6]);
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-9) throw new Error('Court corners are degenerate');
+  return m;
 }
 
-const apply = (h: number[], x: number, y: number): Pt => {
-  const w = h[6] * x + h[7] * y + 1;
-  return { x: (h[0] * x + h[1] * y + h[2]) / w, y: (h[3] * x + h[4] * y + h[5]) / w };
+/** Adjugate: the inverse up to a scale factor, which is all a projective transform needs. */
+function adjugate(m: Mat3): Mat3 {
+  const [a, b, c, d, e, f, g, h, i] = m;
+  return [e * i - f * h, c * h - b * i, b * f - c * e, f * g - d * i, a * i - c * g, c * d - a * f, d * h - e * g, b * g - a * h, a * e - b * d];
+}
+
+const apply = (m: Mat3, x: number, y: number): Pt => {
+  const w = m[6] * x + m[7] * y + m[8];
+  return { x: (m[0] * x + m[1] * y + m[2]) / w, y: (m[3] * x + m[4] * y + m[5]) / w };
 };
 
 export interface CourtMap {
@@ -42,10 +52,8 @@ export interface CourtMap {
 
 /** Builds the court-to-screen mapping from the four outer corners of the doubles court as seen by the camera. */
 export function courtMap(c: Corners): CourtMap {
-  const unit: Pt[] = [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
-  const quad = [c.farLeft, c.farRight, c.nearRight, c.nearLeft];
-  const fwd = solve(unit, quad);
-  const inv = solve(quad, unit);
+  const fwd = squareToQuad([c.farLeft, c.farRight, c.nearRight, c.nearLeft]);
+  const inv = adjugate(fwd);
   return {
     toScreen: (u, v) => apply(fwd, u, v),
     toCourt: (p) => {
