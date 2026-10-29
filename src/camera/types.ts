@@ -4,8 +4,8 @@ import type { Roi } from '../analysis/preprocess';
 import type { Scene } from '../export/ass';
 
 export interface RecorderHandle {
-  /** Starts recording to a file. Call after `onReady`. */
-  start(): Promise<void>;
+  /** Starts recording to a file. Call after `onReady`. Resolves with the file's uri when the camera knows it already. */
+  start(): Promise<string | void>;
   /** Stops recording and resolves with the video file URI (undefined if nothing was recorded). */
   stop(): Promise<string | undefined>;
   /**
@@ -31,6 +31,10 @@ export interface RecorderProps {
   onError: (message: string) => void;
   /** The frame rate the camera actually settled on. Can be lower than the 120 fps we ask for. */
   onFps: (fps: number | undefined) => void;
+  /** The camera was taken away (phone call, another app) or came back. Recording carries on by itself. */
+  onInterruption?: (info: { interrupted: boolean; reason: string }) => void;
+  /** How hot or strained the phone is: nominal, fair, serious, critical or shutdown. */
+  onPressure?: (level: string) => void;
   detection?: DetectionOptions;
   /** Size, frame rate and bit rate of the saved video, for cameras that choose it. */
   videoProfile?: { fps: number; width: number; height: number; bitrate: number };

@@ -7,6 +7,8 @@ export interface CaptureBox { x: number; y: number; w: number; h: number; score:
 type Events = {
   onDetections: (e: { boxes: CaptureBox[] }) => void;
   onError: (e: { message: string }) => void;
+  onInterruption: (e: { interrupted: boolean; reason: string }) => void;
+  onPressure: (e: { level: string }) => void;
 };
 
 declare class RallyCamCaptureModule extends NativeModule<Events> {

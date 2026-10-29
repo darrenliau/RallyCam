@@ -20,7 +20,7 @@ import { RecorderView, isExpoGo, usesNativeCapture } from '../camera/RecorderVie
 import { Capture } from '../../modules/rallycam-export/src/capture';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
-import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo } from '../db/matches';
+import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo, setProvisionalVideo } from '../db/matches';
 import { HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
@@ -67,6 +67,8 @@ export default function Record() {
   const [recError, setRecError] = useState<string | null>(null);
   const [fps, setFps] = useState<number | undefined>(undefined);
   const [ending, setEnding] = useState(false);
+  const [pausedBecause, setPausedBecause] = useState<string | null>(null);
+  const [pressure, setPressure] = useState('nominal');
 
   // Court alignment and player tags
   const sizeKey = `${Math.round(width)}x${Math.round(height)}`;
@@ -202,7 +204,12 @@ export default function Record() {
     recordingStarted.current = true;
     startedAt.current = Date.now();
     setRecording(true);
-    recorder.current?.start().catch((e: Error) => setRecError(e.message));
+    recorder.current?.start()
+      .then(async (uri) => {
+        // Note where the video is being written, so it can be found again if the app is killed mid-game
+        if (typeof uri === 'string') await setProvisionalVideo(await getMatchId(), uri, recorder.current?.bakesOverlay === true && !footage);
+      })
+      .catch((e: Error) => setRecError(e.message));
   }, [cameraReady, aligning, venueLoaded, settings.ready]);
 
   // Save what the overlay shows, about four times a second, so the review can draw it over the video again.
@@ -365,6 +372,8 @@ export default function Record() {
         onFps={setFps}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
         videoProfile={usesNativeCapture ? profile : undefined}
+        onInterruption={(info) => setPausedBecause(info.interrupted ? info.reason : null)}
+        onPressure={setPressure}
       />
       {!venueLoaded ? null : aligning && (
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
@@ -407,7 +416,17 @@ export default function Record() {
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
 
-      {(recError || lowFps || lowSpace) && (
+      {pausedBecause && (
+        <Text style={[s.err, { top: T + 96, left: (width - 360) / 2, width: 360, backgroundColor: 'rgba(160,110,20,0.95)' }]}>
+          The camera is paused because {pausedBecause}. It carries on by itself when that is over. Points you tap are still saved.
+        </Text>
+      )}
+      {!pausedBecause && (pressure === 'serious' || pressure === 'critical' || pressure === 'shutdown') && (
+        <Text style={[s.err, { top: T + 96, left: (width - 360) / 2, width: 360, backgroundColor: 'rgba(200,90,20,0.95)' }]}>
+          The phone is {pressure === 'serious' ? 'getting hot' : 'too hot'}. Move it out of the sun and keep it cool, or the camera will slow down{pressure === 'serious' ? '' : ' or stop'}.
+        </Text>
+      )}
+      {!pausedBecause && pressure !== 'serious' && pressure !== 'critical' && pressure !== 'shutdown' && (recError || lowFps || lowSpace) && (
         <Text style={[s.err, { top: T + 96, left: (width - 360) / 2, width: 360 }, !recError && { backgroundColor: 'rgba(160,110,20,0.9)' }]}>
           {recError
             ? `Recording failed: ${recError}`

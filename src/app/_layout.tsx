@@ -1,12 +1,13 @@
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { Stack } from 'expo-router';
 import { useEffect } from 'react';
-import { purgeEmptyMatches } from '../db/matches';
+import { recoverUnfinishedGames } from '../db/matches';
+import { fileBytes } from '../export/storage';
 import { StatusBar } from 'expo-status-bar';
 import { colors } from '../theme';
 
 export default function RootLayout() {
-  useEffect(() => { purgeEmptyMatches().catch(() => {}); }, []);
+  useEffect(() => { recoverUnfinishedGames(fileBytes).catch(() => {}); }, []);
   // Every screen is portrait except Record, which locks itself to landscape.
   useEffect(() => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); }, []);
   return (

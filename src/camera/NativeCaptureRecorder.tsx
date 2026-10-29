@@ -1,4 +1,4 @@
-import { File, Paths } from 'expo-file-system';
+import { newGameVideoFile } from '../export/storage';
 import { forwardRef, useEffect, useImperativeHandle } from 'react';
 import { Capture, CapturePreview } from '../../modules/rallycam-export/src/capture';
 import type { RecorderHandle, RecorderProps } from './types';
@@ -12,13 +12,15 @@ const VIDEO_FPS = 60;
  * iPhone camera made for RallyCam (modules/rallycam-export/ios): a preview, person detection with Apple's Vision framework,
  * and a recorder that draws the overlay onto every frame while it records. The saved file already has the overlay in it.
  */
-const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, detection, videoProfile }, ref) {
+const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, onInterruption, onPressure, detection, videoProfile }, ref) {
   const native = Capture!;
   const Preview = CapturePreview!;
 
   useEffect(() => {
     let cancelled = false;
     const errors = native.addListener('onError', (e) => onError(e.message));
+    const interruptions = native.addListener('onInterruption', (e) => onInterruption?.(e));
+    const pressure = native.addListener('onPressure', (e) => onPressure?.(e.level));
     native.startSession(CAPTURE_FPS)
       .then((info) => {
         if (cancelled) return;
@@ -29,6 +31,8 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
     return () => {
       cancelled = true;
       errors.remove();
+      interruptions.remove();
+      pressure.remove();
       native.stopSession().catch(() => {});
     };
     // The camera starts once for the life of the screen.
@@ -53,7 +57,10 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
     bakesOverlay: true,
     async start() {
       const p = videoProfile ?? { fps: VIDEO_FPS, width: 1920, height: 1080, bitrate: 14_000_000 };
-      native.startRecording(new File(Paths.cache, `game-${Date.now()}.mp4`).uri, p.fps, p.width, p.height, p.bitrate);
+      // Written straight into the app's own storage, so a game cut off by a crash can be found and recovered
+      const uri = newGameVideoFile('mp4').uri;
+      native.startRecording(uri, p.fps, p.width, p.height, p.bitrate);
+      return uri;
     },
     async stop() {
       return (await native.stopRecording()) ?? undefined;

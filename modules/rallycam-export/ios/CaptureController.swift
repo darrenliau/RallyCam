@@ -40,6 +40,11 @@ final class CaptureController: NSObject {
   // Callbacks to JavaScript
   var onDetections: (([[String: Double]]) -> Void)?
   var onError: ((String) -> Void)?
+  /// true when the camera was taken away (phone call, another app, background), false when it came back
+  var onInterruption: ((Bool, String) -> Void)?
+  /// "nominal", "fair", "serious", "critical" or "shutdown": how hot or strained the phone is
+  var onPressure: ((String) -> Void)?
+  private var pressureObservation: NSKeyValueObservation?
 
   private let sessionQueue = DispatchQueue(label: "rallycam.capture.session")
   private let videoQueue = DispatchQueue(label: "rallycam.capture.video", qos: .userInitiated)
@@ -164,8 +169,42 @@ final class CaptureController: NSObject {
       self?.onError?("The camera stopped: \(message)")
     }
     _ = center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil) { [weak self] note in
-      NSLog("RallyCam: camera interrupted, reason \(String(describing: note.userInfo?[AVCaptureSessionInterruptionReasonKey] ?? "?"))")
-      self?.onError?("The camera was interrupted. Close other apps that use the camera.")
+      let raw = (note.userInfo?[AVCaptureSessionInterruptionReasonKey] as? Int) ?? 0
+      let reason = CaptureController.describe(interruption: raw)
+      NSLog("RallyCam: camera interrupted: \(reason)")
+      self?.onInterruption?(true, reason)
+    }
+    _ = center.addObserver(forName: AVCaptureSession.interruptionEndedNotification, object: session, queue: nil) { [weak self] _ in
+      NSLog("RallyCam: camera interruption ended")
+      self?.onInterruption?(false, "")
+    }
+  }
+
+  static func describe(interruption raw: Int) -> String {
+    switch raw {
+    case 1: return "the app was in the background"
+    case 2: return "another app is using the microphone"
+    case 3: return "another app is using the camera"
+    case 4: return "the camera is not available while two apps share the screen"
+    case 5: return "the phone is too hot or under too much load"
+    default: return "the camera was taken away"
+    }
+  }
+
+  /// Tells JavaScript when the phone starts to overheat, so it can warn before the camera is slowed down.
+  private func watchPressure(of device: AVCaptureDevice) {
+    pressureObservation = device.observe(\.systemPressureState, options: [.new]) { [weak self] device, _ in
+      let level: String
+      switch device.systemPressureState.level {
+      case .nominal: level = "nominal"
+      case .fair: level = "fair"
+      case .serious: level = "serious"
+      case .critical: level = "critical"
+      case .shutdown: level = "shutdown"
+      default: level = "unknown"
+      }
+      NSLog("RallyCam: system pressure \(level)")
+      self?.onPressure?(level)
     }
   }
 
@@ -243,6 +282,7 @@ final class CaptureController: NSObject {
     activeDevice = device
     deviceName = device.localizedName
     statsLock.unlock()
+    watchPressure(of: device)
     return chosen.fps
   }
 
@@ -431,6 +471,8 @@ final class CaptureController: NSObject {
     do {
       try? FileManager.default.removeItem(at: url)
       let w = try AVAssetWriter(outputURL: url, fileType: .mp4)
+      // Write the file in pieces, so a game that is cut off (app killed, battery died) can still be played up to that moment.
+      w.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
       // `width` and `height` are the camera frame. The file may be smaller (see the quality setting).
       let v = AVAssetWriterInput(mediaType: .video, outputSettings: [
         AVVideoCodecKey: AVVideoCodecType.h264,
@@ -500,6 +542,11 @@ final class CaptureController: NSObject {
     let ok = adaptor.append(target, withPresentationTime: time)
     bump {
       if ok { composited += 1; if overlay != nil { withOverlay += 1 } } else { lastProblem = "a video frame could not be written" }
+    }
+    if !ok, let w = writer, w.status == .failed {
+      // Most often the phone is out of space. Stop writing and tell the user, instead of pretending to record.
+      state = .idle
+      onError?("The video stopped saving: \(w.error?.localizedDescription ?? "unknown reason"). The score is still kept.")
     }
   }
 }

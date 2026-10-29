@@ -29,7 +29,7 @@ public class RallyCamCaptureModule: Module {
   public func definition() -> ModuleDefinition {
     Name("RallyCamCapture")
 
-    Events("onDetections", "onError")
+    Events("onDetections", "onError", "onInterruption", "onPressure")
 
     OnCreate {
       let controller = CaptureController.shared
@@ -38,6 +38,12 @@ public class RallyCamCaptureModule: Module {
       }
       controller.onError = { [weak self] message in
         DispatchQueue.main.async { self?.sendEvent("onError", ["message": message]) }
+      }
+      controller.onInterruption = { [weak self] interrupted, reason in
+        DispatchQueue.main.async { self?.sendEvent("onInterruption", ["interrupted": interrupted, "reason": reason]) }
+      }
+      controller.onPressure = { [weak self] level in
+        DispatchQueue.main.async { self?.sendEvent("onPressure", ["level": level]) }
       }
     }
 

@@ -3,6 +3,7 @@ import { replay } from '../engine/scoring';
 import type { MatchConfig, MatchState, Rally, Side } from '../engine/types';
 import { getDb } from './db';
 import { inOrder } from './inOrder';
+import { planRecovery, type UnfinishedGame } from './recovery';
 
 interface MatchRow {
   id: string;
@@ -107,6 +108,43 @@ export async function finishMatch(matchId: string, videoUri: string | null, dura
 export async function setOverlayVideo(matchId: string, uri: string | null): Promise<void> {
   const db = await getDb();
   await db.runAsync('UPDATE matches SET overlay_video_uri = ? WHERE id = ?', uri, matchId);
+}
+
+/**
+ * Records where the video of a game in progress is being written, so it can be found again if the app is killed.
+ * Pass `overlayBaked` when the file already has the overlay drawn into it.
+ */
+export async function setProvisionalVideo(matchId: string, uri: string, overlayBaked: boolean): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('UPDATE matches SET video_uri = ?, overlay_video_uri = ? WHERE id = ?', uri, overlayBaked ? uri : null, matchId);
+}
+
+/**
+ * Run once when the app starts. Finishes games that were cut off, and removes the ones that never got going.
+ * `sizeOf` says how big a video file is now (0 when it is gone).
+ */
+export async function recoverUnfinishedGames(sizeOf: (uri: string | null) => number): Promise<number> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ id: string; video_uri: string | null; overlay_video_uri: string | null; n: number; last_end: number | null }>(
+    `SELECT m.id AS id, m.video_uri AS video_uri, m.overlay_video_uri AS overlay_video_uri,
+            (SELECT COUNT(*) FROM rallies r WHERE r.match_id = m.id) AS n,
+            (SELECT MAX(r.end_ms) FROM rallies r WHERE r.match_id = m.id) AS last_end
+       FROM matches m WHERE m.status = 'live'`,
+  );
+  const games: UnfinishedGame[] = rows.map((r) => ({ id: r.id, rallyCount: r.n, lastRallyEndMs: r.last_end, videoUri: r.video_uri, videoBytes: sizeOf(r.video_uri) }));
+  const plan = planRecovery(games);
+  for (const step of plan) {
+    if (step.action === 'delete') {
+      await db.runAsync('DELETE FROM matches WHERE id = ?', step.id);
+    } else {
+      const baked = rows.find((r) => r.id === step.id)?.overlay_video_uri != null && step.videoUri != null;
+      await db.runAsync(
+        "UPDATE matches SET status = 'done', video_uri = ?, overlay_video_uri = ?, duration_ms = ? WHERE id = ?",
+        step.videoUri, baked ? step.videoUri : null, step.durationMs, step.id,
+      );
+    }
+  }
+  return plan.filter((p) => p.action === 'finish').length;
 }
 
 /** Forgets the video files of a game, for when they have been deleted to free space. The score and stats stay. */

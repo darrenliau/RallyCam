@@ -68,3 +68,10 @@ export function videosFolderStats(): { bytes: number; count: number } {
     return { bytes, count };
   } catch { return { bytes: 0, count: 0 }; }
 }
+
+/** A new file in the games folder, where the camera can write a video that survives the app being killed. */
+export function newGameVideoFile(extension = 'mp4'): File {
+  const dir = new Directory(Paths.document, 'games');
+  if (!dir.exists) dir.create();
+  return new File(dir, `game-${Date.now()}.${extension}`);
+}
