@@ -119,3 +119,14 @@ export async function deleteMatch(id: string): Promise<void> {
   const db = await getDb();
   await db.runAsync('DELETE FROM matches WHERE id = ?', id);
 }
+
+/**
+ * Removes matches that were started but never got a point or a finish, for example duplicates left by an
+ * earlier bug or a match abandoned by closing the app. Run at app start, when no match is being recorded.
+ */
+export async function purgeEmptyMatches(): Promise<void> {
+  const db = await getDb();
+  await db.runAsync(
+    "DELETE FROM matches WHERE status = 'live' AND NOT EXISTS (SELECT 1 FROM rallies r WHERE r.match_id = matches.id)",
+  );
+}

@@ -45,7 +45,9 @@ export default function Record() {
   const [micPerm, askMic] = useMicrophonePermissions();
   const recorder = useRef<RecorderHandle>(null);
   const recordingStarted = useRef(false);
-  const matchId = useRef<Promise<string>>(createMatch(config, venueId));
+  // useRef(createMatch(...)) would run createMatch on every render, adding a row each time. Create it once, lazily.
+  const matchIdRef = useRef<Promise<string> | null>(null);
+  const getMatchId = () => (matchIdRef.current ??= createMatch(config, venueId));
   const startedAt = useRef(0);
   const lastEnd = useRef(0);
 
@@ -181,7 +183,7 @@ export default function Record() {
 
   const persist = useCallback(async (next: MatchState) => {
     setState(next);
-    await saveRallies(await matchId.current, next.rallies);
+    await saveRallies(await getMatchId(), next.rallies);
   }, []);
 
   /** Called by the analysis source in Phase 2. Until then only the dev buttons call it. */
@@ -198,7 +200,7 @@ export default function Record() {
   const endMatch = async () => {
     setEnding(true);
     const uri = await recorder.current?.stop().catch(() => undefined);
-    const id = await matchId.current;
+    const id = await getMatchId();
     await finishMatch(id, uri ?? null, Date.now() - startedAt.current);
     router.replace(`/match/${id}`);
   };
