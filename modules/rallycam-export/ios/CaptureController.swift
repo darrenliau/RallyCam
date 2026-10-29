@@ -609,7 +609,12 @@ final class CaptureController: NSObject {
       self.audioInput?.markAsFinished()
       writer.finishWriting {
         let url = writer.outputURL
-        let error: Error? = writer.status == .completed ? nil : writer.error
+        var error: Error? = writer.status == .completed ? nil : writer.error
+        if error != nil, FileManager.default.fileExists(atPath: url.path) {
+          // The file is written in pieces, so what was saved before the failure can still be played.
+          NSLog("RallyCam: finishing failed (\(CaptureController.describe(error))), keeping what was written")
+          error = nil
+        }
         self.videoQueue.async {
           self.writer = nil
           self.videoInput = nil
@@ -638,6 +643,8 @@ final class CaptureController: NSObject {
         AVVideoCompressionPropertiesKey: [
           AVVideoAverageBitRateKey: outputBitRate,
           AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+          // No B-frames: frames are written in the order they arrive, which is simpler for the live encoder
+          AVVideoAllowFrameReorderingKey: false,
           AVVideoExpectedSourceFrameRateKey: Int(outputFps),
         ],
       ])
@@ -687,6 +694,7 @@ final class CaptureController: NSObject {
 
   private func appendVideo(_ pixelBuffer: CVPixelBuffer, time: CMTime) {
     guard let adaptor, let videoInput, videoInput.isReadyForMoreMediaData, let pool = adaptor.pixelBufferPool else { return }
+    if let w = writer, w.status == .failed { reportWriterFailure(w); return }
     guard writer?.status == .writing, CMTimeGetSeconds(time) > lastVideoPts else { return }
     var created: CVPixelBuffer?
     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created)
@@ -706,15 +714,18 @@ final class CaptureController: NSObject {
     bump {
       if ok { composited += 1; if overlay != nil { withOverlay += 1 } } else { lastProblem = "a video frame could not be written" }
     }
-    if !ok, let w = writer, w.status == .failed {
-      // Most often the phone is out of space. Stop writing and tell the user, instead of pretending to record.
-      state = .idle
-      audioLock.lock(); let aPts = lastAudioPts; let aBad = audioRejected; audioLock.unlock()
-      let context = String(format: "after %.1fs, %d frames, last video %.2fs, last audio %.2fs, audio refused %d", lastVideoPts - firstPts, videoWritten, lastVideoPts - firstPts, aPts - firstPts, aBad)
-      let detail = CaptureController.describe(w.error) + ", " + context
-      NSLog("RallyCam: writer failed: \(detail)")
-      onError?("The video stopped saving (\(detail)). The score is still kept.")
-    }
+    if !ok, let w = writer, w.status == .failed { reportWriterFailure(w) }
+  }
+
+  /// Most often the phone is out of space, or the encoder gave up. Stop writing and say why, instead of pretending to record.
+  private func reportWriterFailure(_ w: AVAssetWriter) {
+    guard state == .recording else { return }
+    state = .idle
+    audioLock.lock(); let aPts = lastAudioPts; let aBad = audioRejected; audioLock.unlock()
+    let context = String(format: "after %.1fs, %ld frames, last video %.2fs, last audio %.2fs, audio refused %ld", lastVideoPts - firstPts, videoWritten, lastVideoPts - firstPts, aPts - firstPts, aBad)
+    let detail = CaptureController.describe(w.error) + ", " + context
+    NSLog("RallyCam: writer failed: \(detail)")
+    onError?("The video stopped saving (\(detail)). The score is still kept.")
   }
 }
 

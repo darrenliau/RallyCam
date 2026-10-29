@@ -418,7 +418,7 @@ export default function Record() {
     if (!recordingStarted.current && state.rallies.length === 0) { router.back(); return; } // nothing was recorded
     endingRef.current = true;
     setEnding(true);
-    const uri = await recorder.current?.stop().catch(() => undefined);
+    const uri = await recorder.current?.stop().catch((e) => { setRecError(`The video could not be finished: ${e?.message ?? e}`); return undefined; });
     const id = await getMatchId();
     if (recordingStarted.current) {
       await saveOverlay(id, {
