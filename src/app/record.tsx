@@ -7,7 +7,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
+import { FRAME_ASPECT, personDetector } from '../analysis/detector';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
+import { DetectorPlayerTracker } from '../analysis/tracker';
 import { CourtAligner } from '../components/CourtAligner';
 import { PlayerOverlay, type TagInfo } from '../components/PlayerOverlay';
 import { CourtMapCard, DistanceCard } from '../components/StatCards';
@@ -113,6 +115,23 @@ export default function Record() {
     }
   };
   useEffect(() => () => simulator.current?.stop(), []);
+
+  // Real tracking, once a native detector is registered. It starts when the court is locked.
+  const mapRef = useRef(map);
+  mapRef.current = map;
+  const sizeRef = useRef({ width, height });
+  sizeRef.current = { width, height };
+  useEffect(() => {
+    if (aligning || !personDetector) return;
+    const tracker = new DetectorPlayerTracker(
+      personDetector(),
+      () => mapRef.current,
+      () => ({ frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }),
+      { nNear, nFar: names.length - nNear },
+    );
+    tracker.start(onTracks);
+    return () => tracker.stop();
+  }, [aligning, nNear, names.length, onTracks]);
 
   const lockCourt = () => {
     savedCorners[sizeKey] = corners;

@@ -13,7 +13,8 @@ Badminton match recorder and tracker. React Native (Expo SDK 58, TypeScript, Exp
 
 ## Not built yet
 - **Automatic scoring.** `src/analysis/types.ts` is the seam. Until the tracker exists, the Record screen shows two dev-only buttons (debug builds) to add points. Production builds show none.
-- **Real player and shuttle tracking.** The overlay is finished but nothing feeds it yet. In debug builds, "Simulate players" on the Record screen sends fake players so you can see it. `src/analysis/players.ts` has the `PlayerTracker` interface to implement.
+- **The native person detector.** The tracking logic is done and tested (`src/analysis/tracker.ts`). What is missing is the code that finds people in camera frames, see "Person detector" below.
+- **Real shuttle tracking.** The overlay is finished but nothing feeds it yet. In debug builds, "Simulate players" on the Record screen sends fake players so you can see it. `src/analysis/players.ts` has the `PlayerTracker` interface to implement.
 - Shot stats (see the Phase 0 plan).
 - App icon and splash, store listings.
 
@@ -56,3 +57,12 @@ src/components/ shared UI
 1. Apple Developer account ($99/yr). `npm i -g eas-cli`, `eas login`.
 2. `eas device:create` to register the iPhone, then `eas build --profile development --platform ios`.
 3. Install the build from the link EAS gives you, then `npx expo start --dev-client` and open it on the phone.
+
+## Person detector (the missing native piece)
+`src/analysis/tracker.ts` turns detections into stable per-player tracks on the court: it maps each person's feet through the locked court corners, ignores spectators, keeps a fixed id per player (near side first, left to right), survives short dropouts and keeps partners apart when they cross. It is unit tested with synthetic detections.
+
+What it needs is a `PersonDetector` (`src/analysis/detector.ts`) that calls back with boxes (fractions of the camera frame) for every analysed frame. Set `personDetector` in that file to a factory and the Record screen starts tracking when the court is locked. Suggested route, none of it tried yet:
+- A vision-camera frame output (`useFrameOutput`) alongside the video output. Frame processors need `react-native-worklets`.
+- A small person or pose model run on each frame, for example through `react-native-fast-tflite`. Analyse at about 15 to 30 frames per second, not at 120.
+- Keep it in a development build, and measure battery and heat on a mid-range Android phone.
+- Check the detector on the Phase 0 footage first: how often are all four players found, and how far off are their feet.
