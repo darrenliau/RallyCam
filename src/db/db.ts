@@ -1,0 +1,41 @@
+import * as SQLite from 'expo-sqlite';
+
+let opened: Promise<SQLite.SQLiteDatabase> | null = null;
+
+/** Opens the local database once and creates the tables on first launch. */
+export function getDb(): Promise<SQLite.SQLiteDatabase> {
+  opened ??= open();
+  return opened;
+}
+
+async function open() {
+  const db = await SQLite.openDatabaseAsync('rallycam.db');
+  await db.execAsync(`
+    PRAGMA journal_mode = WAL;
+    PRAGMA foreign_keys = ON;
+    CREATE TABLE IF NOT EXISTS matches (
+      id           TEXT PRIMARY KEY,
+      created_at   INTEGER NOT NULL,
+      type         TEXT NOT NULL,
+      best_of      INTEGER NOT NULL,
+      first_server TEXT NOT NULL,
+      players      TEXT NOT NULL,
+      video_uri    TEXT,
+      duration_ms  INTEGER,
+      status       TEXT NOT NULL DEFAULT 'live',
+      synced_at    INTEGER
+    );
+    CREATE TABLE IF NOT EXISTS rallies (
+      match_id   TEXT NOT NULL REFERENCES matches(id) ON DELETE CASCADE,
+      idx        INTEGER NOT NULL,
+      winner     TEXT NOT NULL,
+      start_ms   INTEGER,
+      end_ms     INTEGER,
+      shots      INTEGER,
+      confidence REAL,
+      source     TEXT NOT NULL,
+      PRIMARY KEY (match_id, idx)
+    );
+  `);
+  return db;
+}

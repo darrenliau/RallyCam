@@ -1,0 +1,113 @@
+import { replay } from '../engine/scoring';
+import type { MatchConfig, MatchState, Rally, Side } from '../engine/types';
+import { getDb } from './db';
+
+interface MatchRow {
+  id: string;
+  created_at: number;
+  type: 'singles' | 'doubles';
+  best_of: 1 | 3;
+  first_server: Side;
+  players: string;
+  video_uri: string | null;
+  duration_ms: number | null;
+  status: 'live' | 'done';
+}
+
+interface RallyRow {
+  match_id: string;
+  idx: number;
+  winner: Side;
+  start_ms: number | null;
+  end_ms: number | null;
+  shots: number | null;
+  confidence: number | null;
+  source: 'auto' | 'manual';
+}
+
+export interface MatchRecord {
+  id: string;
+  createdAt: number;
+  videoUri: string | null;
+  durationMs: number | null;
+  status: 'live' | 'done';
+  state: MatchState;
+}
+
+const newId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+const toRally = (r: RallyRow): Rally => ({
+  winner: r.winner,
+  startMs: r.start_ms ?? undefined,
+  endMs: r.end_ms ?? undefined,
+  shots: r.shots ?? undefined,
+  confidence: r.confidence ?? undefined,
+  source: r.source,
+});
+
+function toRecord(m: MatchRow, rallies: RallyRow[]): MatchRecord {
+  const config: MatchConfig = {
+    type: m.type,
+    bestOf: m.best_of,
+    firstServer: m.first_server,
+    players: JSON.parse(m.players),
+  };
+  return {
+    id: m.id,
+    createdAt: m.created_at,
+    videoUri: m.video_uri,
+    durationMs: m.duration_ms,
+    status: m.status,
+    state: replay(config, rallies.sort((a, b) => a.idx - b.idx).map(toRally)),
+  };
+}
+
+export async function createMatch(config: MatchConfig): Promise<string> {
+  const db = await getDb();
+  const id = newId();
+  await db.runAsync(
+    'INSERT INTO matches (id, created_at, type, best_of, first_server, players) VALUES (?, ?, ?, ?, ?, ?)',
+    id, Date.now(), config.type, config.bestOf, config.firstServer, JSON.stringify(config.players),
+  );
+  return id;
+}
+
+/** Writes the full rally list for a match. The engine replays from this list, so it is the source of truth. */
+export async function saveRallies(matchId: string, rallies: Rally[]): Promise<void> {
+  const db = await getDb();
+  await db.withTransactionAsync(async () => {
+    await db.runAsync('DELETE FROM rallies WHERE match_id = ?', matchId);
+    for (let i = 0; i < rallies.length; i++) {
+      const r = rallies[i];
+      await db.runAsync(
+        'INSERT INTO rallies (match_id, idx, winner, start_ms, end_ms, shots, confidence, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+        matchId, i, r.winner, r.startMs ?? null, r.endMs ?? null, r.shots ?? null, r.confidence ?? null, r.source,
+      );
+    }
+  });
+}
+
+export async function finishMatch(matchId: string, videoUri: string | null, durationMs: number): Promise<void> {
+  const db = await getDb();
+  await db.runAsync("UPDATE matches SET status = 'done', video_uri = ?, duration_ms = ? WHERE id = ?", videoUri, durationMs, matchId);
+}
+
+export async function listMatches(): Promise<MatchRecord[]> {
+  const db = await getDb();
+  const matches = await db.getAllAsync<MatchRow>('SELECT * FROM matches ORDER BY created_at DESC');
+  const rallies = await db.getAllAsync<RallyRow>('SELECT * FROM rallies');
+  return matches.map((m) => toRecord(m, rallies.filter((r) => r.match_id === m.id)));
+}
+
+export async function getMatch(id: string): Promise<MatchRecord | null> {
+  const db = await getDb();
+  const m = await db.getFirstAsync<MatchRow>('SELECT * FROM matches WHERE id = ?', id);
+  if (!m) return null;
+  const rallies = await db.getAllAsync<RallyRow>('SELECT * FROM rallies WHERE match_id = ?', id);
+  return toRecord(m, rallies);
+}
+
+export async function deleteMatch(id: string): Promise<void> {
+  const db = await getDb();
+  await db.runAsync('DELETE FROM matches WHERE id = ?', id);
+}
