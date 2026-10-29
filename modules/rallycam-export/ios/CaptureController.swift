@@ -105,6 +105,8 @@ final class CaptureController: NSObject {
   private var pushes = 0
   private var decoded = 0
   private var failed = 0
+  private var lastVideoPts = -Double.infinity   // the writer rejects frames that go back in time
+  private var lastAudioPts = -Double.infinity   // guarded by audioLock
   private var composited = 0
   private var withOverlay = 0
   private var lastProblem = ""
@@ -583,6 +585,14 @@ final class CaptureController: NSObject {
 
   func stopRecording(completion: @escaping (URL?, Error?) -> Void) {
     videoQueue.async {
+      if self.state != .recording, let failedWriter = self.writer, failedWriter.status == .failed {
+        // The file is written in pieces, so what was saved before the failure can still be played.
+        let url = failedWriter.outputURL
+        self.writer = nil; self.videoInput = nil; self.audioInput = nil; self.adaptor = nil
+        self.state = .idle
+        completion(FileManager.default.fileExists(atPath: url.path) ? url : nil, nil)
+        return
+      }
       guard self.state == .recording, let writer = self.writer else {
         self.state = .idle
         completion(nil, nil)
@@ -661,6 +671,8 @@ final class CaptureController: NSObject {
       sessionStart = firstTime
       audioOpen = audio != nil
       audioLock.unlock()
+      lastVideoPts = -Double.infinity
+      audioLock.lock(); lastAudioPts = -Double.infinity; audioLock.unlock()
       state = .recording
     } catch {
       state = .idle
@@ -670,6 +682,7 @@ final class CaptureController: NSObject {
 
   private func appendVideo(_ pixelBuffer: CVPixelBuffer, time: CMTime) {
     guard let adaptor, let videoInput, videoInput.isReadyForMoreMediaData, let pool = adaptor.pixelBufferPool else { return }
+    guard writer?.status == .writing, CMTimeGetSeconds(time) > lastVideoPts else { return }
     var created: CVPixelBuffer?
     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created)
     guard let target = created else { return }
@@ -684,18 +697,32 @@ final class CaptureController: NSObject {
     }
     ciContext.render(image, to: target)
     let ok = adaptor.append(target, withPresentationTime: time)
+    if ok { lastVideoPts = CMTimeGetSeconds(time) }
     bump {
       if ok { composited += 1; if overlay != nil { withOverlay += 1 } } else { lastProblem = "a video frame could not be written" }
     }
     if !ok, let w = writer, w.status == .failed {
       // Most often the phone is out of space. Stop writing and tell the user, instead of pretending to record.
       state = .idle
-      onError?("The video stopped saving: \(w.error?.localizedDescription ?? "unknown reason"). The score is still kept.")
+      let detail = CaptureController.describe(w.error)
+      NSLog("RallyCam: writer failed: \(detail)")
+      onError?("The video stopped saving (\(detail)). The score is still kept.")
     }
   }
 }
 
 extension CaptureController {
+  /// The error with its code and the error underneath it, for example "AVFoundationErrorDomain -11800 / NSOSStatusErrorDomain -12780, 3.2 GB free".
+  static func describe(_ error: Error?) -> String {
+    guard let ns = error as NSError? else { return "unknown reason" }
+    var text = "\(ns.domain) \(ns.code)"
+    if let inner = ns.userInfo[NSUnderlyingErrorKey] as? NSError { text += " / \(inner.domain) \(inner.code)" }
+    if let free = try? URL(fileURLWithPath: NSHomeDirectory()).resourceValues(forKeys: [.volumeAvailableCapacityForImportantUsageKey]).volumeAvailableCapacityForImportantUsage {
+      text += String(format: ", %.1f GB free", Double(free) / 1_000_000_000)
+    }
+    return text
+  }
+
   /// Average brightness (0 to 255) of a camera frame, from a coarse grid of the luma plane. Near 0 means the picture is black.
   static func brightness(of buffer: CVPixelBuffer) -> Int {
     CVPixelBufferLockBaseAddress(buffer, .readOnly)
@@ -769,8 +796,11 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
       defer { audioLock.unlock() }
       guard audioOpen, let input = audioInput, input.isReadyForMoreMediaData else { return }
       // audio from before the first video frame is dropped
-      if CMTimeCompare(CMSampleBufferGetPresentationTimeStamp(sampleBuffer), sessionStart) < 0 { return }
-      _ = input.append(sampleBuffer)
+      let audioPts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+      if CMTimeCompare(audioPts, sessionStart) < 0 { return }
+      // one out-of-order audio buffer fails the whole file, so skip it
+      if CMTimeGetSeconds(audioPts) <= lastAudioPts { return }
+      if writer?.status == .writing, input.append(sampleBuffer) { lastAudioPts = CMTimeGetSeconds(audioPts) }
       return
     }
 
