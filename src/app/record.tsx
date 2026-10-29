@@ -487,9 +487,6 @@ export default function Record() {
         onInterruption={(info) => setPausedBecause(info.interrupted ? info.reason : null)}
         onPressure={setPressure}
       />
-      {!venueLoaded ? null : aligning && (
-        <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
-      )}
       {venueLoaded && (
         <MatchOverlay
           width={width}
@@ -593,10 +590,16 @@ export default function Record() {
         </View>
       )}
 
+      {!aligning && (
       <View style={[s.actions, { right: R, bottom: B }]}>
         <Button kind="ghost" label="Fix last point" onPress={onUndo} disabled={state.rallies.length === 0} />
         <Button label={state.matchWinner ? 'Finish now' : 'End game'} onPress={endMatch} disabled={ending} />
       </View>
+      )}
+      {venueLoaded && aligning && (
+        // drawn last so a corner is never hidden behind another control
+        <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
+      )}
     </View>
   );
 }
