@@ -78,6 +78,34 @@ final class CaptureController: NSObject {
   private let audioLock = NSLock()
   private var audioOpen = false
 
+  // Counters for the on-screen diagnostics (dev builds): is the overlay reaching the video?
+  private let statsLock = NSLock()
+  private var pushes = 0
+  private var decoded = 0
+  private var failed = 0
+  private var composited = 0
+  private var withOverlay = 0
+  private var lastProblem = ""
+
+  private func bump(_ change: () -> Void) {
+    statsLock.lock()
+    change()
+    statsLock.unlock()
+  }
+
+  func status() -> [String: Any] {
+    statsLock.lock()
+    defer { statsLock.unlock() }
+    return [
+      "overlayPushes": pushes,
+      "overlayDecoded": decoded,
+      "overlayFailed": failed,
+      "framesWritten": composited,
+      "framesWithOverlay": withOverlay,
+      "lastProblem": lastProblem,
+    ]
+  }
+
   // MARK: session
 
   func start(targetFps: Int, completion: @escaping (Result<CaptureInfo, Error>) -> Void) {
@@ -191,8 +219,16 @@ final class CaptureController: NSObject {
 
   /// `json` is a scene file (see OverlayScene.swift) whose items are all visible now. It replaces the previous overlay.
   func setOverlay(json: String) {
+    bump { pushes += 1 }
     overlayQueue.async {
-      guard let data = json.data(using: .utf8), let scene = try? JSONDecoder().decode(SceneFile.self, from: data) else { return }
+      let scene: SceneFile
+      do {
+        guard let data = json.data(using: .utf8) else { throw CaptureError.setup("overlay text is not UTF-8") }
+        scene = try JSONDecoder().decode(SceneFile.self, from: data)
+      } catch {
+        self.bump { self.failed += 1; self.lastProblem = "overlay decode: \(error)" }
+        return
+      }
       let renderer = OverlayRenderer(file: scene)
       let w = self.frameWidth
       let h = self.frameHeight
@@ -206,10 +242,14 @@ final class CaptureController: NSObject {
       let scale = CGFloat(w) / CGFloat(scene.width)
       ctx.scaleBy(x: scale, y: scale)
       renderer.draw(into: ctx, atMs: 0)
-      guard let image = ctx.makeImage() else { return }
+      guard let image = ctx.makeImage() else {
+        self.bump { self.failed += 1; self.lastProblem = "overlay image could not be made" }
+        return
+      }
       self.overlayLock.lock()
       self.overlayImage = CIImage(cgImage: image)
       self.overlayLock.unlock()
+      self.bump { self.decoded += 1 }
     }
   }
 
@@ -368,9 +408,13 @@ final class CaptureController: NSObject {
     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created)
     guard let target = created else { return }
     var image = CIImage(cvPixelBuffer: pixelBuffer)
-    if let overlay = currentOverlay() { image = overlay.composited(over: image) }
+    let overlay = currentOverlay()
+    if let overlay { image = overlay.composited(over: image) }
     ciContext.render(image, to: target)
-    _ = adaptor.append(target, withPresentationTime: time)
+    let ok = adaptor.append(target, withPresentationTime: time)
+    bump {
+      if ok { composited += 1; if overlay != nil { withOverlay += 1 } } else { lastProblem = "a video frame could not be written" }
+    }
   }
 }
 

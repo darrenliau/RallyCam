@@ -79,6 +79,11 @@ public class RallyCamCaptureModule: Module {
       CaptureController.shared.setOverlay(json: json)
     }
 
+    // Counters for the on-screen diagnostics: pushes, decoded, failed, framesWritten, framesWithOverlay, lastProblem.
+    Function("getStatus") { () -> [String: Any] in
+      CaptureController.shared.status()
+    }
+
     // Court area to look for people in, as fractions of the frame. enabled false turns detection off.
     Function("setDetection") { (enabled: Bool, x: Double, y: Double, w: Double, h: Double) in
       CaptureController.shared.setDetection(roi: enabled ? CGRect(x: x, y: y, width: w, height: h) : nil)

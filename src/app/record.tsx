@@ -16,7 +16,8 @@ import { DetectorPlayerTracker } from '../analysis/tracker';
 import { CourtAligner } from '../components/CourtAligner';
 import { MatchOverlay } from '../components/MatchOverlay';
 import type { TagInfo } from '../components/PlayerOverlay';
-import { RecorderView, isExpoGo } from '../camera/RecorderView';
+import { RecorderView, isExpoGo, usesNativeCapture } from '../camera/RecorderView';
+import { Capture } from '../../modules/rallycam-export/src/capture';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
 import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo } from '../db/matches';
@@ -220,6 +221,21 @@ export default function Record() {
     return () => clearInterval(id);
   }, [recording, names, meter]);
 
+  // Dev builds: show which camera is in use and whether the overlay is reaching the video.
+  const [diag, setDiag] = useState('');
+  useEffect(() => {
+    if (!__DEV__ || aligning) return;
+    const id = setInterval(() => {
+      if (usesNativeCapture && Capture) {
+        const st = Capture.getStatus();
+        setDiag(`native camera · pushed ${st.overlayPushes}, drawn ${st.overlayDecoded}, failed ${st.overlayFailed} · frames ${st.framesWritten}, with overlay ${st.framesWithOverlay}${st.lastProblem ? ` · ${st.lastProblem}` : ''}`);
+      } else {
+        setDiag(isExpoGo ? 'Expo Go camera (overlay is not drawn into the video)' : 'vision-camera (overlay is drawn after the game)');
+      }
+    }, 1000);
+    return () => clearInterval(id);
+  }, [aligning]);
+
   // Cameras that draw the overlay into the video while recording get a fresh copy of it a few times a second.
   const liveState = useRef(state);
   liveState.current = state;
@@ -379,8 +395,9 @@ export default function Record() {
       )}
 
       {__DEV__ && !aligning && (
-        <View style={[s.dev, { bottom: B, left: (width - 210) / 2 }]}>
+        <View style={[s.dev, { bottom: B, left: (width - 260) / 2 }]}>
           <Text style={s.devText}>Dev only. Automatic scoring is not built yet.</Text>
+          {diag !== '' && <Text style={s.devDiag}>{diag}</Text>}
           <View style={{ flexDirection: 'row', gap: 8 }}>
             <Button kind="ghost" label="Near" onPress={() => onPoint('A')} disabled={!recording} style={s.devBtn} />
             <Button kind="ghost" label="Far" onPress={() => onPoint('B')} disabled={!recording} style={s.devBtn} />
@@ -429,7 +446,8 @@ const s = StyleSheet.create({
   banner: { position: 'absolute', gap: 10, backgroundColor: 'rgba(5,9,10,0.85)', borderRadius: 16, padding: 14 },
   bannerText: { color: '#fff', fontSize: 14 },
   err: { position: 'absolute', color: '#fff', backgroundColor: 'rgba(200,40,30,0.85)', padding: 8, borderRadius: 8, fontSize: 12, overflow: 'hidden' },
-  dev: { position: 'absolute', width: 210, backgroundColor: 'rgba(5,9,10,0.7)', borderRadius: 12, padding: 8, gap: 6 },
+  dev: { position: 'absolute', width: 260, backgroundColor: 'rgba(5,9,10,0.7)', borderRadius: 12, padding: 8, gap: 6 },
+  devDiag: { color: '#fff', fontSize: 10 },
   devText: { color: '#C8F04A', fontSize: 11 },
   devBtn: { flex: 1, minHeight: 36 },
   gameOver: { position: 'absolute', alignSelf: 'center', top: '38%', backgroundColor: 'rgba(5,9,10,0.9)', borderRadius: 16, paddingHorizontal: 24, paddingVertical: 14, alignItems: 'center' },
