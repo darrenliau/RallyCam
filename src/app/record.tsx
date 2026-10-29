@@ -7,7 +7,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
-import { FRAME_ASPECT, personDetector } from '../analysis/detector';
+import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
+import { roiFromCorners } from '../analysis/preprocess';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
 import { DetectorPlayerTracker } from '../analysis/tracker';
 import { CourtAligner } from '../components/CourtAligner';
@@ -116,22 +117,27 @@ export default function Record() {
   };
   useEffect(() => () => simulator.current?.stop(), []);
 
-  // Real tracking, once a native detector is registered. It starts when the court is locked.
+  // Real tracking: the camera finds people in the court region and hands them to the tracker.
+  const bridge = useRef(new DetectionBridge()).current;
   const mapRef = useRef(map);
   mapRef.current = map;
   const sizeRef = useRef({ width, height });
   sizeRef.current = { width, height };
+  const roi = useMemo(
+    () => (aligning ? null : roiFromCorners(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height })),
+    [aligning, corners, width, height],
+  );
   useEffect(() => {
-    if (aligning || !personDetector) return;
+    if (aligning || isExpoGo) return;
     const tracker = new DetectorPlayerTracker(
-      personDetector(),
+      bridge,
       () => mapRef.current,
       () => ({ frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }),
       { nNear, nFar: names.length - nNear },
     );
     tracker.start(onTracks);
     return () => tracker.stop();
-  }, [aligning, nNear, names.length, onTracks]);
+  }, [aligning, bridge, nNear, names.length, onTracks]);
 
   const lockCourt = () => {
     savedCorners[sizeKey] = corners;
@@ -218,7 +224,14 @@ export default function Record() {
 
   return (
     <View style={s.fill}>
-      <RecorderView ref={recorder} style={StyleSheet.absoluteFill} onReady={onReady} onError={setRecError} onFps={setFps} />
+      <RecorderView
+        ref={recorder}
+        style={StyleSheet.absoluteFill}
+        onReady={onReady}
+        onError={setRecError}
+        onFps={setFps}
+        detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
+      />
       {!venueLoaded ? null : aligning ? (
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
       ) : (
@@ -235,6 +248,11 @@ export default function Record() {
             {isExpoGo ? 'Standard fps (Expo Go)' : fps != null ? `${fps} fps` : '… fps'}
           </Text>
         </View>
+        {!aligning && !isExpoGo && (
+          <View style={s.chip}>
+            <Text style={s.chipText}>Players {tracks.filter((t) => !t.lost).length}/{names.length}</Text>
+          </View>
+        )}
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
 

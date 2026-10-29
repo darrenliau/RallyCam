@@ -12,8 +12,8 @@ export interface Detection {
 }
 
 /**
- * Finds people in the live camera frames. This is the one piece that needs native code and a model,
- * so it is separate from the tracking logic in tracker.ts, which is plain TypeScript and tested.
+ * Finds people in the live camera frames. The real one runs in the camera component (src/camera/VisionRecorder.tsx),
+ * so it is kept separate from the tracking logic in tracker.ts, which is plain TypeScript and tested.
  * `onDetections` is called once per analysed frame, with an empty array when nobody was found.
  */
 export interface PersonDetector {
@@ -22,10 +22,24 @@ export interface PersonDetector {
 }
 
 /**
- * Set this to a factory for the native detector once it exists. The Record screen starts player
- * tracking automatically when it is set. While it is null, only the debug simulator is available.
+ * Lets the camera component hand detections to the tracker without the tracker knowing about React.
+ * The camera calls `emit` for every analysed frame, and `DetectorPlayerTracker` listens through `start`.
  */
-export const personDetector: (() => PersonDetector) | null = null;
+export class DetectionBridge implements PersonDetector {
+  private listener: ((detections: Detection[]) => void) | null = null;
+
+  start(onDetections: (detections: Detection[]) => void) {
+    this.listener = onDetections;
+  }
+
+  stop() {
+    this.listener = null;
+  }
+
+  emit = (detections: Detection[]) => {
+    this.listener?.(detections);
+  };
+}
 
 /** Aspect ratio (width / height) of the landscape camera frame the detector sees. */
 export const FRAME_ASPECT = 16 / 9;

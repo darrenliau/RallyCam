@@ -58,14 +58,24 @@ src/components/ shared UI
 2. `eas device:create` to register the iPhone, then `eas build --profile development --platform ios`.
 3. Install the build from the link EAS gives you, then `npx expo start --dev-client` and open it on the phone.
 
-## Person detector (the missing native piece)
-`src/analysis/tracker.ts` turns detections into stable per-player tracks on the court: it maps each person's feet through the locked court corners, ignores spectators, keeps a fixed id per player (near side first, left to right), survives short dropouts and keeps partners apart when they cross. It is unit tested with synthetic detections.
+## Person detector
+Runs inside the camera component (`src/camera/VisionRecorder.tsx`), in development and store builds only (Expo Go shows "Players" chip hidden and no tracking).
 
-What it needs is a `PersonDetector` (`src/analysis/detector.ts`) that calls back with boxes (fractions of the camera frame) for every analysed frame. Set `personDetector` in that file to a factory and the Record screen starts tracking when the court is locked. Suggested route, none of it tried yet:
-- A vision-camera frame output (`useFrameOutput`) alongside the video output. Frame processors need `react-native-worklets`.
-- A small person or pose model run on each frame, for example through `react-native-fast-tflite`. Analyse at about 15 to 30 frames per second, not at 120.
-- Keep it in a development build, and measure battery and heat on a mid-range Android phone.
-- Check the detector on the Phase 0 footage first: how often are all four players found, and how far off are their feet.
+How it works, once the court is locked:
+1. A second vision-camera output delivers RGB frames. About 15 per second are analysed (the video output still records at the full frame rate).
+2. `roiFromCorners` takes the part of the frame around the court. `cropResizeRgb` scales it to 300 x 300 RGB. Looking only at the court gives the model far more pixels per player than the whole frame would.
+3. `react-native-fast-tflite` runs `assets/models/ssd_mobilenet_v2_coco_quant_postprocess.tflite` (see `assets/models/README.md` for its input/output contract and licence).
+4. `decodeDetections` keeps the "person" boxes and maps them back to whole-frame coordinates. They go through `DetectionBridge` to `DetectorPlayerTracker`, which drives the rings, tags, court map and distances.
+5. The Record screen shows a "Players 3/4" chip: how many players were seen in the latest frame.
+
+What has been checked: the preprocessing and decoding are unit tested, and I ran this exact code on a real doubles photo with the real model (through a Python TFLite runtime). It found all four players with boxes on them, plus one spectator with a low score, which the tracker ignores.
+
+What has not been checked, because it needs a phone:
+- That the worklet runtime can call the TFLite model directly (the vision-camera v5 docs say it can).
+- The real pixel layout of RGB frames on iOS and Android (BGRA vs RGBA is handled, odd cases show an error on screen).
+- Whether the camera still delivers 120 fps with the extra frame output. Watch the fps chip.
+- Speed, battery and heat. The model runs on the CPU. Try `['core-ml']` or `['android-gpu']` in `useTensorflowModel` later.
+- Accuracy on your footage. Judge that with the offline test below, and replace the model if it is weak. Anything that keeps the contract in `assets/models/README.md` drops in.
 
 ## Check the tracker on real footage (offline)
 Before writing the native detector, see how well a person detector plus our tracker does on Phase 0 clips:
