@@ -3,7 +3,7 @@
     "name": "RallyCam",
     "slug": "rallycam",
     "version": "1.0.0",
-    "orientation": "portrait",
+    "orientation": "default",
     "icon": "./assets/icon.png",
     "userInterfaceStyle": "dark",
     "ios": {
@@ -39,7 +39,8 @@
         }
       ],
       "expo-sqlite",
-      "expo-video"
+      "expo-video",
+      "expo-screen-orientation"
     ]
   }
 }

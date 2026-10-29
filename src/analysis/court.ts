@@ -56,12 +56,20 @@ export function courtMap(c: Corners): CourtMap {
 }
 
 /** A starting guess for a phone on a tripod behind the near baseline. The user drags the corners to fit. */
-export const defaultCorners = (w: number, h: number): Corners => ({
-  farLeft: { x: w * 0.3, y: h * 0.34 },
-  farRight: { x: w * 0.7, y: h * 0.34 },
-  nearRight: { x: w * 0.95, y: h * 0.68 },
-  nearLeft: { x: w * 0.05, y: h * 0.68 },
-});
+export const defaultCorners = (w: number, h: number): Corners =>
+  w > h
+    ? { // landscape: the court is a tall trapezoid in the middle of a wide frame
+        farLeft: { x: w * 0.4, y: h * 0.3 },
+        farRight: { x: w * 0.6, y: h * 0.3 },
+        nearRight: { x: w * 0.82, y: h * 0.88 },
+        nearLeft: { x: w * 0.18, y: h * 0.88 },
+      }
+    : {
+        farLeft: { x: w * 0.3, y: h * 0.34 },
+        farRight: { x: w * 0.7, y: h * 0.34 },
+        nearRight: { x: w * 0.95, y: h * 0.68 },
+        nearLeft: { x: w * 0.05, y: h * 0.68 },
+      };
 
 const SINGLES_SIDE = 0.46 / COURT_W; // singles side line, 0.46 m inside the doubles line
 const SHORT_SERVICE = 1.98 / COURT_L; // short service line, 1.98 m from the net

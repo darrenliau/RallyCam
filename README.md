@@ -4,7 +4,7 @@ Badminton match recorder and tracker. React Native (Expo SDK 58, TypeScript, Exp
 
 ## What works now
 - **Match setup:** singles or doubles, best of 3 or one game, player names.
-- **Recording:** camera + microphone, screen kept awake, video saved with the match.
+- **Recording:** landscape, asks the camera for 120 fps with stabilisation off (react-native-vision-camera), screen kept awake, video saved with the match. The chip on the Record screen shows the frame rate the phone actually gave. Below 60 fps it warns you.
 - **Scoring engine** (`src/engine`): pure TypeScript, unit tested. 21 points, win by 2, cap at 30, serve court and doubles court swapping, undo, fix any earlier point and re-score.
 - **Storage:** local SQLite (`src/db`). Matches and rallies. Nothing leaves the phone.
 - **Court alignment and player tags:** drag four corners onto the court, then each tracked player gets a ring, a name tag (tap two tags to swap), a distance total and a court-map dot. Needs a tracker to feed it (see below).
@@ -14,10 +14,14 @@ Badminton match recorder and tracker. React Native (Expo SDK 58, TypeScript, Exp
 - **Automatic scoring.** `src/analysis/types.ts` is the seam. Until the tracker exists, the Record screen shows two dev-only buttons (debug builds) to add points. Production builds show none.
 - **Real player and shuttle tracking.** The overlay is finished but nothing feeds it yet. In debug builds, "Simulate players" on the Record screen sends fake players so you can see it. `src/analysis/players.ts` has the `PlayerTracker` interface to implement.
 - Shot stats (see the Phase 0 plan).
-- 120 fps capture. `expo-camera` records at its default frame rate. High frame rate needs `react-native-vision-camera` and a development build.
-- Landscape recording, app icon and splash, store listings.
+- App icon and splash, store listings.
 
-## Test on an iPhone
+## Camera backends
+- **Development or store build:** vision-camera, up to 120 fps. Needs a native build (`eas build --profile development`).
+- **Expo Go:** falls back to expo-camera at the standard frame rate, because Expo Go cannot load vision-camera. Good for trying the screens, not for judging tracking quality.
+- The 120 fps request is best effort. I have not been able to run it on a device from the build environment, so check the fps chip on a real phone first. If it settles on 60 or 30, look at `onSessionConfigSelected` in `src/camera/VisionRecorder.tsx`.
+
+## Test on an iPhone (Expo Go)
 1. Install **Expo Go** from the App Store.
 2. On your computer: clone the repo, `npm install`, `npx expo start`. Phone and computer must be on the same Wi-Fi (or use `npx expo start --tunnel`).
 3. Scan the QR code with the iPhone Camera app. It opens in Expo Go and asks for camera and microphone access.
@@ -46,3 +50,8 @@ src/db/         SQLite schema and queries
 src/analysis/   interface for the future tracker
 src/components/ shared UI
 ```
+
+## Development build for the iPhone (120 fps)
+1. Apple Developer account ($99/yr). `npm i -g eas-cli`, `eas login`.
+2. `eas device:create` to register the iPhone, then `eas build --profile development --platform ios`.
+3. Install the build from the link EAS gives you, then `npx expo start --dev-client` and open it on the phone.

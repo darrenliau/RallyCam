@@ -1,6 +1,7 @@
 import * as Haptics from 'expo-haptics';
-import { CameraView, useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
+import { useCameraPermissions, useMicrophonePermissions } from 'expo-camera';
 import { useKeepAwake } from 'expo-keep-awake';
+import * as ScreenOrientation from 'expo-screen-orientation';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
@@ -10,6 +11,8 @@ import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players
 import { CourtAligner } from '../components/CourtAligner';
 import { PlayerOverlay, type TagInfo } from '../components/PlayerOverlay';
 import { CourtMapCard, DistanceCard } from '../components/StatCards';
+import { RecorderView, isExpoGo } from '../camera/RecorderView';
+import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
 import { ScoreBoard } from '../components/ScoreBoard';
 import { createMatch, finishMatch, saveRallies } from '../db/matches';
@@ -19,7 +22,7 @@ import type { MatchConfig, MatchState, Side } from '../engine/types';
 import { colors } from '../theme';
 
 // Remembered between matches in this session so the user does not re-align every time.
-let savedCorners: Corners | null = null;
+const savedCorners: Record<string, Corners> = {};
 
 export default function Record() {
   useKeepAwake();
@@ -28,10 +31,16 @@ export default function Record() {
   const { config: raw } = useLocalSearchParams<{ config: string }>();
   const config = useRef<MatchConfig>(JSON.parse(raw)).current;
 
+  // Matches are filmed in landscape: the court is wide and the phone sits on a tripod. Everything else stays portrait.
+  useEffect(() => {
+    ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.LANDSCAPE).catch(() => {});
+    return () => { ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {}); };
+  }, []);
+
   const [camPerm, askCam] = useCameraPermissions();
   const [micPerm, askMic] = useMicrophonePermissions();
-  const camera = useRef<CameraView>(null);
-  const recording = useRef<Promise<{ uri: string } | undefined> | null>(null);
+  const recorder = useRef<RecorderHandle>(null);
+  const recordingStarted = useRef(false);
   const matchId = useRef<Promise<string>>(createMatch(config));
   const startedAt = useRef(0);
   const lastEnd = useRef(0);
@@ -39,10 +48,13 @@ export default function Record() {
   const [state, setState] = useState<MatchState>(() => newMatch(config));
   const [elapsed, setElapsed] = useState(0);
   const [recError, setRecError] = useState<string | null>(null);
+  const [fps, setFps] = useState<number | undefined>(undefined);
   const [ending, setEnding] = useState(false);
 
   // Court alignment and player tags
-  const [corners, setCorners] = useState<Corners>(() => savedCorners ?? defaultCorners(width, height));
+  const sizeKey = `${Math.round(width)}x${Math.round(height)}`;
+  const [dragged, setDragged] = useState<Corners | null>(null);
+  const corners = dragged ?? savedCorners[sizeKey] ?? defaultCorners(width, height);
   const [aligning, setAligning] = useState(true);
   const map = useMemo(() => courtMap(corners), [corners]);
   const nNear = config.players.A.length;
@@ -81,7 +93,7 @@ export default function Record() {
   };
   useEffect(() => () => simulator.current?.stop(), []);
 
-  const lockCourt = () => { savedCorners = corners; setAligning(false); };
+  const lockCourt = () => { savedCorners[sizeKey] = corners; setAligning(false); };
   const onTagPress = (id: number) => {
     if (selected == null) return setSelected(id);
     if (selected !== id) {
@@ -104,10 +116,11 @@ export default function Record() {
     return () => clearInterval(id);
   }, []);
 
-  const startRecording = useCallback(() => {
-    if (recording.current) return;
+  const onReady = useCallback(() => {
+    if (recordingStarted.current) return;
+    recordingStarted.current = true;
     startedAt.current = Date.now();
-    recording.current = camera.current?.recordAsync().catch((e: Error) => { setRecError(e.message); return undefined; }) ?? null;
+    recorder.current?.start().catch((e: Error) => setRecError(e.message));
   }, []);
 
   const persist = useCallback(async (next: MatchState) => {
@@ -128,10 +141,9 @@ export default function Record() {
 
   const endMatch = async () => {
     setEnding(true);
-    camera.current?.stopRecording();
-    const result = await recording.current;
+    const uri = await recorder.current?.stop().catch(() => undefined);
     const id = await matchId.current;
-    await finishMatch(id, result?.uri ?? null, Date.now() - startedAt.current);
+    await finishMatch(id, uri ?? null, Date.now() - startedAt.current);
     router.replace(`/match/${id}`);
   };
 
@@ -147,52 +159,77 @@ export default function Record() {
     );
   }
 
+  const L = insets.left + 12;
+  const R = insets.right + 12;
+  const T = insets.top + 8;
+  const B = insets.bottom + 12;
+  const boardW = Math.min(360, width - 2 * (L + 170));
+  const lowFps = fps != null && fps < 60;
+
   return (
     <View style={s.fill}>
-      <CameraView ref={camera} style={StyleSheet.absoluteFill} mode="video" facing="back" onCameraReady={startRecording} />
+      <RecorderView ref={recorder} style={StyleSheet.absoluteFill} onReady={onReady} onError={setRecError} onFps={setFps} />
       {aligning ? (
-        <CourtAligner corners={corners} onChange={setCorners} width={width} height={height} />
+        <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
       ) : (
         <PlayerOverlay map={map} width={width} height={height} tracks={tracks} tagFor={tagFor} selected={selected} onTagPress={onTagPress} />
       )}
-      <View style={[s.top, { top: insets.top + 8 }]} pointerEvents="box-none">
-        <View style={s.chipRow}>
-          <View style={s.chip}>
-            <View style={s.dot} />
-            <Text style={s.chipText}>{recError ? 'Not recording' : formatClock(elapsed)}</Text>
-          </View>
-          {!aligning && (
-            <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>
-          )}
+
+      <View style={[s.chipRow, { left: L, top: T }]} pointerEvents="box-none">
+        <View style={s.chip}>
+          <View style={s.dot} />
+          <Text style={s.chipText}>{recError ? 'Not recording' : formatClock(elapsed)}</Text>
         </View>
-        <ScoreBoard state={state} />
-        {recError && <Text style={s.err}>Recording failed: {recError}</Text>}
-        {__DEV__ && (
-          <View style={s.dev}>
-            <Text style={s.devText}>Dev only. Automatic scoring is not built yet.</Text>
-            <View style={{ flexDirection: 'row', gap: 8 }}>
-              <Button kind="ghost" label="Point: near" onPress={() => onPoint('A')} style={s.devBtn} />
-              <Button kind="ghost" label="Point: far" onPress={() => onPoint('B')} style={s.devBtn} />
-            </View>
-            <Button kind="ghost" label={simulating ? 'Stop simulated players' : 'Simulate players'} onPress={toggleSimulation} style={s.devBtn} />
-          </View>
-        )}
+        <View style={s.chip}>
+          <Text style={[s.chipText, lowFps && { color: colors.amber }]}>
+            {isExpoGo ? 'Standard fps (Expo Go)' : fps != null ? `${fps} fps` : '… fps'}
+          </Text>
+        </View>
+        {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
+
+      <View style={{ position: 'absolute', top: T, left: (width - boardW) / 2, width: boardW }} pointerEvents="none">
+        <ScoreBoard state={state} />
+      </View>
+
+      {(recError || lowFps) && (
+        <Text style={[s.err, { top: T + 96, left: (width - 360) / 2, width: 360 }, !recError && { backgroundColor: 'rgba(160,110,20,0.9)' }]}>
+          {recError ? `Recording failed: ${recError}` : `Only ${fps} fps on this phone. Fast shots will blur, so tracking will be less accurate.`}
+        </Text>
+      )}
+
+      {__DEV__ && (
+        <View style={[s.dev, { top: T, right: R }]}>
+          <Text style={s.devText}>Dev only. Automatic scoring is not built yet.</Text>
+          <View style={{ flexDirection: 'row', gap: 8 }}>
+            <Button kind="ghost" label="Near" onPress={() => onPoint('A')} style={s.devBtn} />
+            <Button kind="ghost" label="Far" onPress={() => onPoint('B')} style={s.devBtn} />
+          </View>
+          <Button kind="ghost" label={simulating ? 'Stop simulation' : 'Simulate players'} onPress={toggleSimulation} style={s.devBtn} />
+        </View>
+      )}
+
+      {!aligning && tracks.length > 0 && (
+        <>
+          <View style={{ position: 'absolute', left: L, top: T + 40 }} pointerEvents="none">
+            <CourtMapCard tracks={tracks} tagFor={tagFor} />
+          </View>
+          <View style={{ position: 'absolute', left: L, bottom: B }} pointerEvents="none">
+            <DistanceCard rows={names.map((name, i) => ({ name, color: colorOf(i), metres: meter.metres(i) }))} />
+          </View>
+        </>
+      )}
+
       {aligning && (
-        <View style={[s.banner, { bottom: insets.bottom + 96 }]}>
+        <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
           <Text style={s.bannerText}>Drag the four dots onto the outer corners of the court, then lock it in.</Text>
           <Button label="Lock court" onPress={lockCourt} />
         </View>
       )}
-      {!aligning && tracks.length > 0 && (
-        <View style={[s.cards, { bottom: insets.bottom + 84 }]} pointerEvents="none">
-          <DistanceCard rows={names.map((name, i) => ({ name, color: colorOf(i), metres: meter.metres(i) }))} />
-          <CourtMapCard tracks={tracks} tagFor={tagFor} />
-        </View>
-      )}
-      <View style={[s.bottom, { paddingBottom: insets.bottom + 12 }]}>
-        <Button kind="ghost" label="Fix last point" onPress={onUndo} disabled={state.rallies.length === 0} style={{ flex: 1 }} />
-        <Button label={state.matchWinner ? 'Finish' : 'End match'} onPress={endMatch} disabled={ending} style={{ flex: 1 }} />
+
+      <View style={[s.actions, { right: R, bottom: B }]}>
+        <Button kind="ghost" label="Fix last point" onPress={onUndo} disabled={state.rallies.length === 0} />
+        <Button label={state.matchWinner ? 'Finish' : 'End match'} onPress={endMatch} disabled={ending} />
       </View>
     </View>
   );
@@ -203,18 +240,16 @@ const s = StyleSheet.create({
   center: { justifyContent: 'center' },
   h: { color: colors.text, fontSize: 22, fontWeight: '700' },
   muted: { color: colors.muted, fontSize: 14 },
-  top: { position: 'absolute', left: 12, right: 12, gap: 8 },
-  chipRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chipRow: { position: 'absolute', flexDirection: 'row', alignItems: 'center', gap: 8 },
+  chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(5,9,10,0.62)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5 },
   chip2: { color: '#fff', fontSize: 12, fontWeight: '600', backgroundColor: 'rgba(5,9,10,0.62)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden' },
-  banner: { position: 'absolute', left: 16, right: 16, gap: 10, backgroundColor: 'rgba(5,9,10,0.85)', borderRadius: 16, padding: 14 },
-  bannerText: { color: '#fff', fontSize: 14 },
-  cards: { position: 'absolute', left: 12, right: 12, flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-end', gap: 8 },
-  chip: { alignSelf: 'flex-start', flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(5,9,10,0.62)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5 },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF3B30' },
   chipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
-  err: { color: '#fff', backgroundColor: 'rgba(200,40,30,0.85)', padding: 8, borderRadius: 8, fontSize: 12 },
-  dev: { backgroundColor: 'rgba(5,9,10,0.7)', borderRadius: 12, padding: 8, gap: 6 },
+  banner: { position: 'absolute', gap: 10, backgroundColor: 'rgba(5,9,10,0.85)', borderRadius: 16, padding: 14 },
+  bannerText: { color: '#fff', fontSize: 14 },
+  err: { position: 'absolute', color: '#fff', backgroundColor: 'rgba(200,40,30,0.85)', padding: 8, borderRadius: 8, fontSize: 12, overflow: 'hidden' },
+  dev: { position: 'absolute', width: 210, backgroundColor: 'rgba(5,9,10,0.7)', borderRadius: 12, padding: 8, gap: 6 },
   devText: { color: '#C8F04A', fontSize: 11 },
-  devBtn: { flex: 1, minHeight: 40 },
-  bottom: { position: 'absolute', left: 0, right: 0, bottom: 0, flexDirection: 'row', gap: 10, paddingHorizontal: 16, paddingTop: 12 },
+  devBtn: { flex: 1, minHeight: 36 },
+  actions: { position: 'absolute', width: 160, gap: 8 },
 });
