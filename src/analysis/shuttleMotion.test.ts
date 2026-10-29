@@ -60,6 +60,35 @@ describe('MotionShuttleTracker', () => {
     expect(last?.track?.misses).toBe(0);
   });
 
+  it('ignores a blinking spot that stays in one place', () => {
+    const rand = rng(5);
+    const tracker = new MotionShuttleTracker();
+    let tracked = 0;
+    let candidatesLate = 0;
+    for (let i = 0; i < 60; i++) {
+      const flicker: Blob[] = [{ x: 300 + (i % 3), y: 150 + (i % 2), w: 5, h: 5, value: i % 2 ? 240 : 20 }];
+      const r = tracker.update(frame(flicker, rand), W, H, i / 60);
+      if (r.track?.confirmed) tracked++;
+      if (i > 30) candidatesLate += r.candidates.length;
+    }
+    expect(candidatesLate).toBe(0);
+    expect(tracked).toBe(0);
+  });
+
+  it('drops a track that has lasted longer than any flight', () => {
+    const rand = rng(6);
+    const tracker = new MotionShuttleTracker({ maxTrackAge: 0.3 });
+    let sawTrack = false;
+    let droppedAfter = false;
+    for (let i = 0; i < 40; i++) {
+      const r = tracker.update(frame([shuttleAt(i, 10)], rand), W, H, i / 60);
+      if (r.track) sawTrack = true;
+      else if (sawTrack) droppedAfter = true;
+    }
+    expect(sawTrack).toBe(true);
+    expect(droppedAfter).toBe(true);
+  });
+
   it('does not invent a track from noise alone', () => {
     const rand = rng(3);
     const tracker = new MotionShuttleTracker();

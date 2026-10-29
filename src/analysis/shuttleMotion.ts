@@ -35,6 +35,12 @@ export interface MotionOptions {
   /** If more than this share of the picture changed, the phone shook or the lights flickered: skip the frame. */
   shakeFraction: number;
   maxCandidates: number;
+  /** A blob that keeps turning up within this many pixels of the same place is background (a flickering light, a screen), not a shuttle. */
+  hotRadius: number;
+  hotFrames: number;
+  hotCount: number;
+  /** No flight lasts this long, so a track older than this is dropped and the search starts again. */
+  maxTrackAge: number;
 }
 
 export const DEFAULT_MOTION: MotionOptions = {
@@ -47,8 +53,12 @@ export const DEFAULT_MOTION: MotionOptions = {
   minStep: 6,
   confirmHits: 3,
   maxMisses: 8,
-  shakeFraction: 0.03,
+  shakeFraction: 0.012,
   maxCandidates: 12,
+  hotRadius: 14,
+  hotFrames: 10,
+  hotCount: 4,
+  maxTrackAge: 1.2,
 };
 
 export interface Track {
@@ -62,6 +72,8 @@ export interface Track {
   confirmed: boolean;
   /** Time of the latest position, in seconds. */
   t: number;
+  /** When the track was confirmed. */
+  born: number;
 }
 
 export interface MotionResult {
@@ -80,6 +92,7 @@ export class MotionShuttleTracker {
   private prevT = 0;
   private track: Track | undefined;
   private seeds: Seed[] = [];
+  private recent: Candidate[][] = [];
   private o: MotionOptions;
 
   constructor(options: Partial<MotionOptions> = {}) {
@@ -90,6 +103,7 @@ export class MotionShuttleTracker {
     this.prev = this.prev2 = null;
     this.track = undefined;
     this.seeds = [];
+    this.recent = [];
   }
 
   /** `luma` is the brightness of the area to watch, one byte per pixel, `w` x `h`. `t` is its time in seconds. */
@@ -132,7 +146,7 @@ export class MotionShuttleTracker {
       return { candidates: [], track: this.track, activeFraction, shaky: true };
     }
 
-    const candidates = this.blobs(cellCount, cellDiff, cw, ch);
+    const candidates = this.dropBackground(this.blobs(cellCount, cellDiff, cw, ch));
     this.follow(candidates, obsT);
     return { candidates, track: this.track, activeFraction, shaky: false };
   }
@@ -180,6 +194,19 @@ export class MotionShuttleTracker {
     return out.slice(0, o.maxCandidates);
   }
 
+  /** Remove blobs that have been at about the same spot in several of the last few frames. */
+  private dropBackground(found: Candidate[]): Candidate[] {
+    const o = this.o;
+    const keep = found.filter((c) => {
+      let n = 0;
+      for (const frame of this.recent) if (frame.some((h) => Math.hypot(h.x - c.x, h.y - c.y) < o.hotRadius)) n++;
+      return n < o.hotCount;
+    });
+    this.recent.push(found);
+    if (this.recent.length > o.hotFrames) this.recent.shift();
+    return keep;
+  }
+
   private miss() {
     if (!this.track) { this.seeds = []; return; }
     this.track = { ...this.track, misses: this.track.misses + 1 };
@@ -190,6 +217,7 @@ export class MotionShuttleTracker {
     const o = this.o;
     if (this.track) {
       const tr = this.track;
+      if (t - tr.born > o.maxTrackAge) { this.track = undefined; this.seeds = []; return; }
       const dt = Math.max(1e-3, t - tr.t);
       const px = tr.x + tr.vx * dt;
       const py = tr.y + tr.vy * dt;
@@ -202,7 +230,7 @@ export class MotionShuttleTracker {
       if (best && bestD <= o.gate * 0.6 + tr.misses * 20) {
         const vx = (best.x - tr.x) / dt;
         const vy = (best.y - tr.y) / dt;
-        this.track = { x: best.x, y: best.y, vx: 0.6 * vx + 0.4 * tr.vx, vy: 0.6 * vy + 0.4 * tr.vy, hits: tr.hits + 1, misses: 0, confirmed: true, t };
+        this.track = { x: best.x, y: best.y, vx: 0.6 * vx + 0.4 * tr.vx, vy: 0.6 * vy + 0.4 * tr.vy, hits: tr.hits + 1, misses: 0, confirmed: true, t, born: tr.born };
       } else {
         this.miss();
       }
@@ -235,7 +263,7 @@ export class MotionShuttleTracker {
         const c = cands[best];
         const seed: Seed = { x: c.x, y: c.y, t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1 };
         if (seed.hits >= o.confirmHits) {
-          this.track = { x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t };
+          this.track = { x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t, born: t };
           this.seeds = [];
           return;
         }

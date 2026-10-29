@@ -20,6 +20,7 @@ struct ShuttleTrack {
   var misses: Int
   var confirmed: Bool
   var t: Double
+  var born: Double
 }
 
 struct ShuttleResult {
@@ -49,8 +50,12 @@ final class MotionShuttleTracker {
   private let minStep = 6.0
   private let confirmHits = 3
   private let maxMisses = 8
-  private let shakeFraction = 0.03
+  private let shakeFraction = 0.012
   private let maxCandidates = 12
+  private let hotRadius = 14.0
+  private let hotFrames = 10
+  private let hotCount = 4
+  private let maxTrackAge = 1.2
 
   private var frames: [[UInt8]] = [[], [], []]   // newest, previous, the one before
   private var width = 0
@@ -59,11 +64,13 @@ final class MotionShuttleTracker {
   private var haveFrames = 0
   private(set) var track: ShuttleTrack?
   private var seeds: [Seed] = []
+  private var recent: [[ShuttleCandidate]] = []
 
   func reset() {
     haveFrames = 0
     track = nil
     seeds = []
+    recent = []
   }
 
   /// `plane` is the camera's luma plane. (x0, y0, w, h) is the area to watch, in pixels. `t` is the frame time in seconds.
@@ -121,7 +128,7 @@ final class MotionShuttleTracker {
       return ShuttleResult(candidates: [], track: track, activeFraction: activeFraction, shaky: true)
     }
 
-    let candidates = blobs(count: cellCount, diff: cellDiff, cw: cw, ch: ch)
+    let candidates = dropBackground(blobs(count: cellCount, diff: cellDiff, cw: cw, ch: ch))
     follow(candidates, t: obsT)
     return ShuttleResult(candidates: candidates, track: track, activeFraction: activeFraction, shaky: false)
   }
@@ -173,6 +180,18 @@ final class MotionShuttleTracker {
     return Array(out.prefix(maxCandidates))
   }
 
+  /// Remove blobs that have been at about the same spot in several of the last few frames.
+  private func dropBackground(_ found: [ShuttleCandidate]) -> [ShuttleCandidate] {
+    let keep = found.filter { c in
+      var n = 0
+      for frame in recent where frame.contains(where: { hypot($0.x - c.x, $0.y - c.y) < hotRadius }) { n += 1 }
+      return n < hotCount
+    }
+    recent.append(found)
+    if recent.count > hotFrames { recent.removeFirst() }
+    return keep
+  }
+
   private func miss() {
     guard var tr = track else { seeds = []; return }
     tr.misses += 1
@@ -181,6 +200,7 @@ final class MotionShuttleTracker {
 
   private func follow(_ cands: [ShuttleCandidate], t: Double) {
     if let tr = track {
+      if t - tr.born > maxTrackAge { track = nil; seeds = []; return }
       let dt = max(1e-3, t - tr.t)
       let px = tr.x + tr.vx * dt
       let py = tr.y + tr.vy * dt
@@ -193,7 +213,7 @@ final class MotionShuttleTracker {
       if let best, bestD <= gate * 0.6 + Double(tr.misses) * 20 {
         let vx = (best.x - tr.x) / dt
         let vy = (best.y - tr.y) / dt
-        track = ShuttleTrack(x: best.x, y: best.y, vx: 0.6 * vx + 0.4 * tr.vx, vy: 0.6 * vy + 0.4 * tr.vy, hits: tr.hits + 1, misses: 0, confirmed: true, t: t)
+        track = ShuttleTrack(x: best.x, y: best.y, vx: 0.6 * vx + 0.4 * tr.vx, vy: 0.6 * vy + 0.4 * tr.vy, hits: tr.hits + 1, misses: 0, confirmed: true, t: t, born: tr.born)
       } else {
         miss()
       }
@@ -225,7 +245,7 @@ final class MotionShuttleTracker {
         let c = cands[best]
         let seed = Seed(x: c.x, y: c.y, t: t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1)
         if seed.hits >= confirmHits {
-          track = ShuttleTrack(x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t: t)
+          track = ShuttleTrack(x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t: t, born: t)
           seeds = []
           return
         }
