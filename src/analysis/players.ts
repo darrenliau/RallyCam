@@ -1,7 +1,13 @@
 import { COURT_L, COURT_W } from './court';
 
 /** One person the tracker follows. Position is in court coordinates (see court.ts). */
-export interface Track { id: number; u: number; v: number }
+export interface Track {
+  id: number;
+  u: number;
+  v: number;
+  /** Frames since the player was last detected. 0 or missing means seen in the latest frame; above 0 the position is a guess. */
+  lost?: number;
+}
 
 /**
  * Phase 2 will implement this with an on-device person detector. Track ids are stable per person

@@ -66,3 +66,14 @@ What it needs is a `PersonDetector` (`src/analysis/detector.ts`) that calls back
 - A small person or pose model run on each frame, for example through `react-native-fast-tflite`. Analyse at about 15 to 30 frames per second, not at 120.
 - Keep it in a development build, and measure battery and heat on a mid-range Android phone.
 - Check the detector on the Phase 0 footage first: how often are all four players found, and how far off are their feet.
+
+## Check the tracker on real footage (offline)
+Before writing the native detector, see how well a person detector plus our tracker does on Phase 0 clips:
+```
+pip install torch torchvision opencv-python
+python3 tools/detect_people.py data/raw/s01.mp4 --out data/predictions/s01_people.csv           # small mobile-class model
+python3 tools/detect_people.py data/raw/s01.mp4 --out data/predictions/s01_people_big.csv --model fasterrcnn   # best case
+npx tsx tools/evaluate-tracking.ts --session s01 --doubles --analysis-fps 15
+```
+It needs `data/labels/s01_court.json` (the four court corners in video pixels, same file as the Phase 0 labelling spec). The report shows how often all players are seen, gaps, distance moved and possible identity swaps ("jumps"). For positional accuracy, hand-label about 50 frames in `data/labels/s01_players.csv` (`frame,id,x,y`: the player's feet in pixels, id 0 and 1 for the near side left to right, 2 and 3 for the far side) and add `--gt data/labels/s01_players.csv`.
+The Python script has not been run against real weights from the build environment, only syntax-checked.

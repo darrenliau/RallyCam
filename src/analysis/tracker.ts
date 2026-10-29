@@ -98,7 +98,7 @@ export class PlayerTrackerCore {
     this.side(0, this.o.nNear, pts.filter((p) => p.v >= 0.5));
     this.side(this.o.nNear, this.o.nNear + this.o.nFar, pts.filter((p) => p.v < 0.5));
 
-    return this.slots.filter((s): s is Slot => s !== null).map((s) => ({ id: s.id, u: s.u, v: s.v }));
+    return this.slots.filter((s): s is Slot => s !== null).map((s) => ({ id: s.id, u: s.u, v: s.v, lost: s.lost }));
   }
 
   private side(from: number, to: number, pts: Pos[]) {
