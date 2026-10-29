@@ -1,4 +1,5 @@
 import * as SQLite from 'expo-sqlite';
+export { inOrder } from './inOrder';
 
 let opened: Promise<SQLite.SQLiteDatabase> | null = null;
 

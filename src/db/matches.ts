@@ -2,6 +2,7 @@ import type { OverlayData } from '../analysis/overlay';
 import { replay } from '../engine/scoring';
 import type { MatchConfig, MatchState, Rally, Side } from '../engine/types';
 import { getDb } from './db';
+import { inOrder } from './inOrder';
 
 interface MatchRow {
   id: string;
@@ -82,17 +83,19 @@ export async function createMatch(config: MatchConfig, venueId?: string | null):
 }
 
 /** Writes the full rally list for a match. The engine replays from this list, so it is the source of truth. */
-export async function saveRallies(matchId: string, rallies: Rally[]): Promise<void> {
-  const db = await getDb();
-  await db.withTransactionAsync(async () => {
-    await db.runAsync('DELETE FROM rallies WHERE match_id = ?', matchId);
-    for (let i = 0; i < rallies.length; i++) {
-      const r = rallies[i];
-      await db.runAsync(
-        'INSERT INTO rallies (match_id, idx, winner, start_ms, end_ms, shots, confidence, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-        matchId, i, r.winner, r.startMs ?? null, r.endMs ?? null, r.shots ?? null, r.confidence ?? null, r.source,
-      );
-    }
+export function saveRallies(matchId: string, rallies: Rally[]): Promise<void> {
+  return inOrder(async () => {
+    const db = await getDb();
+    await db.withTransactionAsync(async () => {
+      await db.runAsync('DELETE FROM rallies WHERE match_id = ?', matchId);
+      for (let i = 0; i < rallies.length; i++) {
+        const r = rallies[i];
+        await db.runAsync(
+          'INSERT INTO rallies (match_id, idx, winner, start_ms, end_ms, shots, confidence, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+          matchId, i, r.winner, r.startMs ?? null, r.endMs ?? null, r.shots ?? null, r.confidence ?? null, r.source,
+        );
+      }
+    });
   });
 }
 

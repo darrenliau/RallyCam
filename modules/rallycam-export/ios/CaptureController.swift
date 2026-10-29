@@ -87,6 +87,7 @@ final class CaptureController: NSObject {
   private var withOverlay = 0
   private var lastProblem = ""
   private var lens = ""
+  private var framesIn = 0
 
   private func bump(_ change: () -> Void) {
     statsLock.lock()
@@ -105,6 +106,8 @@ final class CaptureController: NSObject {
       "framesWithOverlay": withOverlay,
       "lastProblem": lastProblem,
       "lens": lens,
+      "running": session.isRunning,
+      "framesIn": framesIn,
     ]
   }
 
@@ -122,11 +125,32 @@ final class CaptureController: NSObject {
   }
 
   private func configureAndRun(targetFps: Int) throws -> CaptureInfo {
+    NSLog("RallyCam: starting the camera, wanted \(targetFps) fps")
     let fps = try configure(targetFps: targetFps)
     frameWidth = 1920
     frameHeight = 1080
+    observeSession()
     if !session.isRunning { session.startRunning() }
+    NSLog("RallyCam: camera session running = \(session.isRunning), \(fps) fps, lens \(lens)")
     return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight)
+  }
+
+  private var observing = false
+
+  /// Reports camera problems that happen after start (another app took the camera, a hardware error, and so on).
+  private func observeSession() {
+    guard !observing else { return }
+    observing = true
+    let center = NotificationCenter.default
+    _ = center.addObserver(forName: AVCaptureSession.runtimeErrorNotification, object: session, queue: nil) { [weak self] note in
+      let message = (note.userInfo?[AVCaptureSessionErrorKey] as? Error)?.localizedDescription ?? "unknown"
+      NSLog("RallyCam: camera error: \(message)")
+      self?.onError?("The camera stopped: \(message)")
+    }
+    _ = center.addObserver(forName: AVCaptureSession.wasInterruptedNotification, object: session, queue: nil) { [weak self] note in
+      NSLog("RallyCam: camera interrupted, reason \(String(describing: note.userInfo?[AVCaptureSessionInterruptionReasonKey] ?? "?"))")
+      self?.onError?("The camera was interrupted. Close other apps that use the camera.")
+    }
   }
 
   /// The best 1080p format of a camera for the wanted frame rate, and the rate it can really do.
@@ -471,6 +495,10 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
 
     guard output === videoOutput, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
     let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+    bump {
+      framesIn += 1
+      if framesIn == 1 { NSLog("RallyCam: first camera frame, \(CVPixelBufferGetWidth(pixelBuffer))x\(CVPixelBufferGetHeight(pixelBuffer))") }
+    }
 
     detectIfDue(pixelBuffer)
 
