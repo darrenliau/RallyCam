@@ -4,7 +4,7 @@ import { useKeepAwake } from 'expo-keep-awake';
 import * as ScreenOrientation from 'expo-screen-orientation';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { StyleSheet, Text, useWindowDimensions, View } from 'react-native';
+import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
 import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
@@ -525,6 +525,12 @@ export default function Record() {
       )}
 
       <View style={[s.chipRow, { left: L, top: T }]} pointerEvents="box-none">
+        {aligning && !recording && (
+          // only until recording starts: after that, leaving means ending the game with End game
+          <Pressable style={s.chip} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
+            <Text style={s.chipText}>‹ Back</Text>
+          </Pressable>
+        )}
         <View style={s.chip}>
           <View style={[s.dot, !recording && { backgroundColor: colors.muted }]} />
           <Text style={s.chipText}>{recError ? 'Not recording' : recording ? formatClock(elapsed) : 'Not recording yet'}</Text>
