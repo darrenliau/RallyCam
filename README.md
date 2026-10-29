@@ -7,13 +7,21 @@ Badminton match recorder and tracker. React Native (Expo SDK 58, TypeScript, Exp
 - **Recording:** camera + microphone, screen kept awake, video saved with the match.
 - **Scoring engine** (`src/engine`): pure TypeScript, unit tested. 21 points, win by 2, cap at 30, serve court and doubles court swapping, undo, fix any earlier point and re-score.
 - **Storage:** local SQLite (`src/db`). Matches and rallies. Nothing leaves the phone.
+- **Court alignment and player tags:** drag four corners onto the court, then each tracked player gets a ring, a name tag (tap two tags to swap), a distance total and a court-map dot. Needs a tracker to feed it (see below).
 - **Review:** video, score chart per game, every point, change who won a point.
 
 ## Not built yet
 - **Automatic scoring.** `src/analysis/types.ts` is the seam. Until the tracker exists, the Record screen shows two dev-only buttons (debug builds) to add points. Production builds show none.
-- Shuttle and player tracking, rings and overlays, shot stats (see the Phase 0 plan).
+- **Real player and shuttle tracking.** The overlay is finished but nothing feeds it yet. In debug builds, "Simulate players" on the Record screen sends fake players so you can see it. `src/analysis/players.ts` has the `PlayerTracker` interface to implement.
+- Shot stats (see the Phase 0 plan).
 - 120 fps capture. `expo-camera` records at its default frame rate. High frame rate needs `react-native-vision-camera` and a development build.
 - Landscape recording, app icon and splash, store listings.
+
+## Test on an iPhone
+1. Install **Expo Go** from the App Store.
+2. On your computer: clone the repo, `npm install`, `npx expo start`. Phone and computer must be on the same Wi-Fi (or use `npx expo start --tunnel`).
+3. Scan the QR code with the iPhone Camera app. It opens in Expo Go and asks for camera and microphone access.
+4. Start a match, lock the court, then tap "Simulate players" (debug builds only) to see the tags.
 
 ## Run it
 ```
