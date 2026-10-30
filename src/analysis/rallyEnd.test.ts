@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judgeRally, serveProblem, isRallyOver, GONE_S, LANDED_S } from './rallyEnd';
+import { judgeRally, serveProblem, isRallyOver, isContinuation, GONE_S, GONE_MAX_S, LANDED_S, CONTINUE_S } from './rallyEnd';
 
 const P = (t: number, u: number, v: number) => ({ t, u, v });
 const now = (t: number) => t + GONE_S + 0.1;
@@ -97,5 +97,42 @@ describe('ending a rally at the landing', () => {
   });
   it('does not end a rally with too few shots early', () => {
     expect(isRallyOver(landed(0.25, { shots: 1 }), 2 + LANDED_S + 0.05, false)).toBe(false);
+  });
+});
+
+describe('players still moving or stopped', () => {
+  const t = { shots: 4, lastHit: P(1, 0.5, 0.8), lastSeen: P(2, 0.5, 0.25), descending: true };
+
+  it('waits while the players are still running, even after a clear landing', () => {
+    expect(isRallyOver(t, 2 + LANDED_S + 0.05, false, false)).toBe(false);
+    expect(isRallyOver(t, 2 + GONE_S + 0.1, false, false)).toBe(false);
+  });
+  it('still gives up after a while, so a stuck player cannot hold a point forever', () => {
+    expect(isRallyOver(t, 2 + GONE_MAX_S + 0.1, false, false)).toBe(true);
+  });
+  it('is unchanged when the players are stopped or nothing is known', () => {
+    expect(isRallyOver(t, 2 + LANDED_S + 0.05, false, true)).toBe(true);
+    expect(isRallyOver(t, 2 + LANDED_S + 0.05, false, undefined)).toBe(true);
+  });
+  it('is more sure of a point when the players stopped, less when they were still moving', () => {
+    const at = 2 + GONE_MAX_S + 0.1;
+    const none = judgeRally(t, at, false)!.confidence;
+    expect(judgeRally(t, at, false, true)!.confidence).toBeGreaterThan(none);
+    expect(judgeRally(t, at, false, false)!.confidence).toBeLessThan(none);
+  });
+});
+
+describe('a rally cut short', () => {
+  const landing = { u: 0.5, v: 0.3 };
+  it('is when the shuttle comes back soon, near where it was lost, and players are still moving', () => {
+    expect(isContinuation(landing, { u: 0.55, v: 0.35 }, 1, false)).toBe(true);
+    expect(isContinuation(landing, { u: 0.55, v: 0.35 }, 1, undefined)).toBe(true);
+  });
+  it('is not when the players have stopped (a new serve is coming)', () => {
+    expect(isContinuation(landing, { u: 0.55, v: 0.35 }, 1, true)).toBe(false);
+  });
+  it('is not when it comes back late or far away', () => {
+    expect(isContinuation(landing, { u: 0.55, v: 0.35 }, CONTINUE_S + 0.5, false)).toBe(false);
+    expect(isContinuation(landing, { u: 0.5, v: 0.9 }, 1, false)).toBe(false);
   });
 });

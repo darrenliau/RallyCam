@@ -28,7 +28,8 @@ import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
-import { isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
+import { PlayerMotion } from '../analysis/playerMotion';
+import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
 import { addRally, editRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
 import type { MatchConfig, MatchState, Side } from '../engine/types';
@@ -122,10 +123,13 @@ export default function Record() {
     return { name: names[p], color: p < nNear ? colors.near[p] : colors.far[p - nNear] };
   }, [names, nNear]);
 
+  // How much the players move, to tell a finished rally (they stop) from a shuttle the camera lost (they keep running)
+  const motion = useRef(new PlayerMotion()).current;
   const onTracks = useCallback((t: Track[]) => {
+    motion.push(Date.now() / 1000, t);
     meter.update(t, (id) => assignRef.current[id] ?? id);
     setTracks(t);
-  }, [meter]);
+  }, [meter, motion]);
 
   const toggleSimulation = () => {
     if (simulator.current) {
@@ -306,7 +310,13 @@ export default function Record() {
   // A guess at who won the rally, from where the shuttle was last hit and last seen. The player confirms it.
   const [suggestion, setSuggestion] = useState<Verdict | null>(null);
   const judged = useRef(false);
-  const tally = useRef({ shown: 0, agreed: 0, flipped: 0, dismissed: 0, notServe: 0 });
+  const tally = useRef({ shown: 0, agreed: 0, flipped: 0, dismissed: 0, notServe: 0, cutShort: 0 });
+  // The point just called: where the shuttle was last seen and when. If the shuttle comes back soon, the rally was cut short.
+  const pendingCall = useRef<{ camT: number; u: number; v: number } | null>(null);
+  // The rally carried on after a point was undone, so it will not start with a serve
+  const continuing = useRef(false);
+  const cutShortRef = useRef<() => void>(() => {});
+  const [cutNote, setCutNote] = useState(false);
   const serveRef = useRef(state.serve);
   serveRef.current = state.serve;
   const judgeCtx = useRef({ recording: false, over: false, singles: config.type === 'singles' });
@@ -377,24 +387,40 @@ export default function Record() {
       if (ctx.recording && !ctx.over && !judged.current) {
         const trace = estimator.trace();
         let verdict: Verdict | null = null;
-        if (isRallyOver(trace, now, ctx.singles)) {
+        const wall = Date.now() / 1000;
+        const calm = trace.lastSeen ? motion.calm(wall, now - trace.lastSeen.t) : undefined;
+        if (isRallyOver(trace, now, ctx.singles, calm)) {
           const sv = serveRef.current;
           const sideNames = sv.side === 'A' ? config.players.A : config.players.B;
           const playerIdx = (sv.side === 'A' ? 0 : config.players.A.length) + sv.playerIndex;
           const serverTrack = latest.current.tracks.find((x) => !x.lost && (assignRef.current[x.id] ?? x.id) === playerIdx);
-          const problem = sideNames.length ? serveProblem(trace, { side: sv.side, court: sv.court, server: serverTrack ? { u: serverTrack.u, v: serverTrack.v } : undefined }) : null;
+          const problem = continuing.current || !sideNames.length ? null : serveProblem(trace, { side: sv.side, court: sv.court, server: serverTrack ? { u: serverTrack.u, v: serverTrack.v } : undefined });
           if (problem) {
             // Movement that did not start like a serve: a shuttle being picked up, a practice hit. Not a point.
             tally.current.notServe += 1;
             estimator.newRally();
           } else {
-            verdict = judgeRally(trace, now, ctx.singles);
+            verdict = judgeRally(trace, now, ctx.singles, calm);
           }
         }
         if (verdict) {
           judged.current = true;
+          continuing.current = false;
+          if (trace.lastSeen) pendingCall.current = { camT: now, u: trace.lastSeen.u, v: trace.lastSeen.v };
           tally.current.shown += 1;
           setSuggestion(verdict);
+        }
+      }
+      // A point was just called: did the shuttle come back soon, near where it was lost, with the players still moving?
+      const pc = pendingCall.current;
+      if (pc) {
+        if (now - pc.camT > CONTINUE_S) pendingCall.current = null;
+        else {
+          const first = estimator.trace().firstSeen;
+          if (first && first.t > pc.camT) {
+            pendingCall.current = null;
+            if (isContinuation(pc, first, first.t - pc.camT, motion.calm(Date.now() / 1000, 1))) cutShortRef.current();
+          }
         }
       }
       const frames = estimator.trail(now);
@@ -402,7 +428,8 @@ export default function Record() {
       setTrail(frames.map((p) => frameToScreen(p, geometry())));
       const st = native.getShuttleStatus();
       const t = tally.current;
-      setShuttleDiag(`score guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve)\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+      const act = motion.activity(Date.now() / 1000, 1.5);
+      setShuttleDiag(`players moving: ${act === undefined ? 'unknown' : `${act.toFixed(1)} m/s`}\nscore guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve), ${t.cutShort} cut short\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -457,8 +484,26 @@ export default function Record() {
     persist(editRally(state, autoPoint.index, { winner: autoPoint.winner === 'A' ? 'B' : 'A', source: 'manual' }));
   }, [state, persist, autoPoint]);
 
+  // The shuttle came back soon after a point was called: the rally was cut short. Take the point back and let it carry on.
+  cutShortRef.current = () => {
+    if (!autoPoint || state.rallies.length !== autoPoint.index + 1 || state.rallies[autoPoint.index].source !== 'auto') return;
+    tally.current.agreed -= 1;
+    tally.current.cutShort += 1;
+    continuing.current = true;
+    setAutoPoint(null);
+    setCutNote(true);
+    persist(undoLast(state));
+  };
+  useEffect(() => {
+    if (!cutNote) return;
+    const id = setTimeout(() => setCutNote(false), 5000);
+    return () => clearTimeout(id);
+  }, [cutNote]);
+
   const onPoint = useCallback((winner: Side) => {
     if (!recordingStarted.current) return;
+    pendingCall.current = null;
+    continuing.current = false;
     const now = Date.now() - startedAt.current;
     const next = addRally(state, { winner, startMs: lastEnd.current, endMs: now, source: 'manual' });
     lastEnd.current = now;
@@ -646,7 +691,13 @@ export default function Record() {
         </View>
       )}
 
-      {autoPoint && state.rallies.length === autoPoint.index + 1 && !aligning && (
+      {cutNote && !aligning && (
+        <View style={[s.banner, { top: T + 8, left: (width - 360) / 2, width: 360 }]} pointerEvents="none">
+          <Text style={s.bannerText}>The rally carried on, so the last point was taken back</Text>
+        </View>
+      )}
+
+      {autoPoint && state.rallies.length === autoPoint.index + 1 && !aligning && !cutNote && (
         <View style={[s.banner, { top: T + 8, left: (width - 360) / 2, width: 360 }]}>
           <Text style={s.bannerText}>Point to {sideLabel(state.config, autoPoint.winner)} (automatic)</Text>
           <View style={s.suggestRow}>

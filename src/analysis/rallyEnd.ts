@@ -35,6 +35,12 @@ export interface Verdict {
 export const GONE_S = 1.6;
 /** After a clear landing (shuttle lost while going down, well away from the lines and the net) the rally is called this soon. */
 export const LANDED_S = 0.6;
+/** If the players are still running, the shuttle was probably just lost by the camera: wait up to this long before giving up. */
+export const GONE_MAX_S = 4;
+/** After a point is called, a shuttle seen again this soon, near where it came down, means the rally was cut short. */
+export const CONTINUE_S = 2.5;
+/** ...and within this distance of the landing (metres on the floor map). */
+export const CONTINUE_M = 4;
 /** A rally with fewer shots than this is probably noise or a serve being fumbled. */
 export const MIN_SHOTS = 2;
 const SINGLES_SIDE_M = 0.46;
@@ -51,10 +57,10 @@ const other = (s: Side): Side => (s === 'A' ? 'B' : 'A');
  * The player who made the last hit wins only if the shuttle crossed the net and came down inside the court. Otherwise
  * (into the net, or out) the last hitter loses. Returns null until the shuttle has been gone for GONE_S.
  */
-export function judgeRally(trace: RallyTrace, now: number, singles: boolean): Verdict | null {
+export function judgeRally(trace: RallyTrace, now: number, singles: boolean, calm?: boolean): Verdict | null {
   const { lastHit, lastSeen } = trace;
   if (!lastHit || !lastSeen || trace.shots < MIN_SHOTS) return null;
-  if (!isRallyOver(trace, now, singles)) return null;
+  if (!isRallyOver(trace, now, singles, calm)) return null;
 
   const hitter = sideOf(lastHit.v);
   const lands = sideOf(lastSeen.v);
@@ -68,6 +74,9 @@ export function judgeRally(trace: RallyTrace, now: number, singles: boolean): Ve
   if (nearLine) confidence -= 0.35;
   if (nearNet) confidence -= 0.25;
   if (trace.shots < 3) confidence -= 0.1;
+  // Players stopping after the shuttle came down is what a finished rally looks like
+  if (calm === true) confidence += 0.1;
+  if (calm === false) confidence -= 0.2;
   const reason = hitterWins ? 'landed in' : !crossed ? 'stayed on hitter\'s side' : 'landed out';
   return { winner: hitterWins ? hitter : other(hitter), confidence: Math.max(0.1, +confidence.toFixed(2)), reason };
 }
@@ -97,12 +106,26 @@ function clearLanding(p: { u: number; v: number }, singles: boolean): boolean {
  * LANDED_S, when it was lost coming down at a spot that is clearly in or clearly out. A shuttle lost any other way
  * (going up, hidden behind a player) could still come back, so it gets the longer wait.
  */
-export function isRallyOver(trace: RallyTrace, now: number, singles = false): boolean {
+export function isRallyOver(trace: RallyTrace, now: number, singles = false, calm?: boolean): boolean {
   const seen = trace.lastSeen;
   if (!seen) return false;
   const gone = now - seen.t;
+  if (gone >= GONE_MAX_S) return true;
+  // Players keep running while a rally is on and stop once the shuttle has landed. Still moving means wait.
+  if (calm === false) return false;
   if (gone >= GONE_S) return true;
   return gone >= LANDED_S && trace.descending === true && trace.shots >= MIN_SHOTS && clearLanding(seen, singles);
+}
+
+/**
+ * True when the shuttle shows up again soon after a point was called, near where it was last seen, while the players
+ * are still moving: the rally was not over, the camera had lost the shuttle for a moment.
+ * `sinceCallS` is the time since the point was called, `appearedAt` where the shuttle reappeared, `landing` where it was last seen.
+ */
+export function isContinuation(landing: { u: number; v: number }, appearedAt: { u: number; v: number }, sinceCallS: number, calm?: boolean): boolean {
+  if (sinceCallS > CONTINUE_S || calm === true) return false;
+  const d = Math.hypot((landing.u - appearedAt.u) * COURT_W, (landing.v - appearedAt.v) * COURT_L);
+  return d <= CONTINUE_M;
 }
 
 /**

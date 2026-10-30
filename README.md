@@ -178,3 +178,10 @@ With shuttle tracking on, the court map card shows the shuttle: a yellow dot whi
 ## Ending a rally at the landing
 
 A rally used to be called when the shuttle had been out of sight for 1.6 s. Now it is also called 0.6 s after a **clear landing**: the shuttle was last seen moving down the picture, there were at least two shots, and the spot is at least 0.6 m from every line and from the net. Then the winner is judged exactly as before (`isRallyOver` and `judgeRally` in `src/analysis/rallyEnd.ts`). A shuttle lost going up or sideways, or landing close to a line or the net, still gets the full 1.6 s, because it might be hidden behind a player and come back, or the in or out call is too close to trust. If the shuttle shows up again within the 0.6 s the rally carries on.
+
+## Using the players' pauses
+
+Players usually stop for a couple of seconds once the shuttle has landed, and keep running while a rally is on. `PlayerMotion` (`src/analysis/playerMotion.ts`) measures how fast the busiest tracked player is moving (steps under 6 cm are jitter) and answers "calm", "moving" or "unknown" (no tracking). It is used three ways:
+- **Hold:** if the shuttle is out of sight but a player is still moving, the rally is not called over, up to 4 s. This stops a shuttle the camera merely lost from ending a rally.
+- **Confidence:** a point called while the players have stopped is more sure; one called while they are still moving is less sure (and gets flagged in Review).
+- **Cut short:** after a point is called, if the shuttle shows up again within 2.5 s, within 4 m of where it was lost, and the players are not calm, the point is taken back automatically, a notice says so, and the rally carries on without needing a new serve (`isContinuation` in `rallyEnd.ts`). The debug panel shows the players' speed and a "cut short" count.
