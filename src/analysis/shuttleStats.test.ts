@@ -72,6 +72,28 @@ describe('ShuttleEstimator', () => {
     expect(trail[trail.length - 1].x).toBeCloseTo(0.9, 5);
   });
 
+  it('ignores things that are far outside the court, like the next court\'s players', () => {
+    const est = new ShuttleEstimator(identity);
+    // a fast "shuttle" well to the left of the court, then one beyond the far baseline
+    for (let i = 0; i < 20; i++) est.push({ t: i / 60, x: -1 + i * 0.01, y: 0.5 });
+    for (let i = 0; i < 20; i++) est.push({ t: 1 + i / 60, x: 0.5, y: -1 - i * 0.01 });
+    expect(est.stats(1.4)).toBeNull();
+    expect(est.trace().shots).toBe(0);
+    expect(est.trail(1.4)).toEqual([]);
+  });
+
+  it('still takes a shuttle a little outside the lines', () => {
+    const est = new ShuttleEstimator(identity);
+    const end = fly(est, -0.2, 0.3, 0, 0.4, 0.5);
+    expect(est.stats(end)).not.toBeNull();
+  });
+
+  it('does not report an impossible speed', () => {
+    const est = new ShuttleEstimator(identity);
+    const end = fly(est, 0, 1, 0, 0.04, 0.5); // the whole court width in 40 ms: ~150 m/s
+    expect(est.stats(end)?.speedKmh ?? 0).toBeLessThan(10);
+  });
+
   describe('on the court map', () => {
     /** Shuttle falling straight down the picture at `x`, from y0 to y1. */
     const fall = (est: ShuttleEstimator, x: number, y0: number, y1: number, startT: number, secs: number) => {

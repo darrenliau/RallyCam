@@ -6,7 +6,14 @@ import { landingCall, type FloorPoint, type RallyTrace } from './rallyEnd';
 export interface ShuttleSample { t: number; x: number; y: number }
 
 /** Plausible shuttle speeds only. Beyond this the track jumped to something else. */
-const MAX_SPEED_MS = 150;
+const MAX_SPEED_MS = 75;
+/**
+ * Floor positions further outside the court than this (as fractions of its width and length) are not our shuttle: they are
+ * the next court's players and rackets, which the watched area also covers. A shuttle in the air projects a little beyond the lines, hence the room.
+ */
+const OUTSIDE_U = 0.4;
+const OUTSIDE_V = 0.5;
+
 /** After this long without a sample the shuttle is considered gone. */
 const GONE_AFTER_S = 1.2;
 /** The shuttle was seen this recently, so it is still in the air. */
@@ -57,9 +64,10 @@ export class ShuttleEstimator {
   }
 
   push(s: ShuttleSample) {
+    const { u, v } = this.toFloor(s.x, s.y);
+    if (u < -OUTSIDE_U || u > 1 + OUTSIDE_U || v < -OUTSIDE_V || v > 1 + OUTSIDE_V) return;
     this.recent.push(s);
     while (this.recent.length && s.t - this.recent[0].t > 1) this.recent.shift();
-    const { u, v } = this.toFloor(s.x, s.y);
     const last = this.last;
     const gap = last ? s.t - last.t : Infinity;
 

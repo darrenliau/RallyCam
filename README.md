@@ -189,3 +189,7 @@ Players usually stop for a couple of seconds once the shuttle has landed, and ke
 ## Shuttle tracker: crowded frames and learned background
 
 From the second shuttle log (`phase0/data/second-session.shuttle.csv.gz`, 12.7 minutes): 36% of frames had the maximum 12 candidates, at a steady rate in every minute, all along one horizontal strip. That is a shimmering screen or pattern, not a shuttle. The tracker (`shuttleMotion.ts`, mirrored in `ShuttleTracker.swift`) now has two more rules: a frame with 10 or more candidates cannot start a new track (an existing track keeps going), and the picture is divided into 24 px squares that learn which places keep producing candidates, and candidates there are dropped while looking for a new track. Replaying the log through the old rules gave 167 track starts; with the crowded-frame rule, 3; with both, 0.
+
+## Replaying a recorded video through the shuttle tracker
+
+`npx tsx tools/replay-video.ts clip.mp4 [y0] [out.json]` (needs ffmpeg) runs the tracker over a video at full size, masking RallyCam's own cards, and lists every track it confirms with time, path and speed. Use it with short clips from the phone to see what the tracker finds without a build. On the first real-court clips it followed a real shuttle against the wall, and also latched onto the next court's players and a player's leg (no player boxes are available offline, unlike in the app).
