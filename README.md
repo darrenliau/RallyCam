@@ -161,3 +161,8 @@ With the experimental shuttle tracker on, the app scores rallies by itself. `src
 Known weak spots: the shuttle's floor position is only right when it is low, so high or far landings are guesses; rallies where the tracker loses the shuttle mid-flight end early.
 
 Serve check: before a rally is judged, `serveProblem` (in `rallyEnd.ts`) checks that the shuttle first appeared on the serving side, in the right or left half for the serving court, and within about 3.5 m of the server when that player is tracked. Movement that does not start like a serve (a shuttle being picked up, a practice hit) is thrown away and counted as "ignored (no serve)" in the debug panel instead of becoming a point.
+
+## Players crossing, and players versus the shuttle tracker
+
+- **Crossing:** two players on the same side closer than about 1.3 m are "in contact". While in contact the tracker trusts each player's expected path over the detector, keeps their speed so they carry on past each other, and does not start a new player from a merged box. Shirt colour (average torso colour from the detector, `look`) is learned while a player is alone, and counts against a match when it differs, so players who touch and turn back are told apart. Without colour (Expo Go / Android path) a turn-back after overlapping can still swap ids. See `src/analysis/tracker.ts` and the "players crossing over" tests.
+- **Players versus shuttle:** the shuttle tracker is given each player's box, widened for arms and racket (`playerMask`). Movement inside it does not count towards "the picture shook", and blobs inside it cannot start a new shuttle track (an existing track can still pass through). Boxes older than 0.6 s are ignored. The Swift side is `ShuttleTracker.swift` and `CaptureController.swift`.

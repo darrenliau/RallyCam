@@ -2,7 +2,7 @@ import { NativeModule, requireNativeView, requireOptionalNativeModule } from 'ex
 import type { ComponentType } from 'react';
 import type { ViewProps } from 'react-native';
 
-export interface CaptureBox { x: number; y: number; w: number; h: number; score: number }
+export interface CaptureBox { x: number; y: number; w: number; h: number; score: number; ly?: number; lcb?: number; lcr?: number }
 
 /** What the experimental shuttle tracker reports. Positions are fractions of the camera frame. */
 export interface ShuttleEvent {

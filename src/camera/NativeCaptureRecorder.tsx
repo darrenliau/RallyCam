@@ -42,7 +42,7 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
   const onDetections = detection?.onDetections;
   useEffect(() => {
     if (!onDetections) return;
-    const sub = native.addListener('onDetections', (e) => onDetections(e.boxes));
+    const sub = native.addListener('onDetections', (e) => onDetections(e.boxes.map(({ ly, lcb, lcr, ...box }) => (ly != null && lcb != null && lcr != null ? { ...box, look: [ly, lcb, lcr] as [number, number, number] } : box))));
     return () => sub.remove();
   }, [native, onDetections]);
 

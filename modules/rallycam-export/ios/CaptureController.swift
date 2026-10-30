@@ -83,6 +83,9 @@ final class CaptureController: NSObject {
   private var detectionROI: CGRect?   // fractions of the frame, top left origin
   private var detectBusy = false
   private var lastDetect = CACurrentMediaTime()
+  // People seen in the latest detection (frame fractions, top left origin), so the shuttle tracker can leave them alone. Guarded by detectLock.
+  private var people: [CGRect] = []
+  private var peopleAt = 0.0
 
   // Recording. `state` and the writer objects are only touched on videoQueue, except audioOpen (guarded by audioLock).
   private var state = RecordingState.idle
@@ -427,16 +430,30 @@ final class CaptureController: NSObject {
       let request = VNDetectHumanRectanglesRequest()
       request.upperBodyOnly = false
       do { try VNImageRequestHandler(cvPixelBuffer: target, options: [:]).perform([request]) } catch { return }
+      CVPixelBufferLockBaseAddress(target, .readOnly)
       let boxes: [[String: Double]] = (request.results ?? []).map { o in
         let b = o.boundingBox   // normalised to the crop, origin bottom left
-        return [
+        var box: [String: Double] = [
           "x": Double(roi.minX + b.minX * roi.width),
           "y": Double(roi.minY + (1 - b.maxY) * roi.height),
           "w": Double(b.width * roi.width),
           "h": Double(b.height * roi.height),
           "score": Double(o.confidence),
         ]
+        // shirt colour, so two players can be told apart when they cross (see look in detector.ts)
+        if let look = CaptureController.torsoColour(of: target, box: b) {
+          box["ly"] = look.0; box["lcb"] = look.1; box["lcr"] = look.2
+        }
+        return box
       }
+      CVPixelBufferUnlockBaseAddress(target, .readOnly)
+      self.detectLock.lock()
+      self.people = (request.results ?? []).map { o in
+        let b = o.boundingBox
+        return CGRect(x: roi.minX + b.minX * roi.width, y: roi.minY + (1 - b.maxY) * roi.height, width: b.width * roi.width, height: b.height * roi.height)
+      }
+      self.peopleAt = CACurrentMediaTime()
+      self.detectLock.unlock()
       self.onDetections?(boxes)
     }
   }
@@ -514,7 +531,16 @@ final class CaptureController: NSObject {
       let w = max(16, min(fw - x0, Int(roi.width * CGFloat(fw))))
       let h = max(16, min(fh - y0, Int(roi.height * CGFloat(fh))))
 
-      let result = self.shuttleTracker.update(plane: base.assumingMemoryBound(to: UInt8.self), stride: stride, x0: x0, y0: y0, w: w, h: h, t: t)
+      // players, as boxes in the pixels of the watched area. A detection older than a moment ago is not trusted.
+      self.detectLock.lock()
+      let seen = CACurrentMediaTime() - self.peopleAt < 0.6 ? self.people : []
+      self.detectLock.unlock()
+      let masks = seen.map { p -> CGRect in
+        let box = CGRect(x: p.minX * CGFloat(fw) - CGFloat(x0), y: p.minY * CGFloat(fh) - CGFloat(y0), width: p.width * CGFloat(fw), height: p.height * CGFloat(fh))
+        return playerMask(box, boundsW: CGFloat(w), boundsH: CGFloat(h))
+      }
+
+      let result = self.shuttleTracker.update(plane: base.assumingMemoryBound(to: UInt8.self), stride: stride, x0: x0, y0: y0, w: w, h: h, t: t, masks: masks)
       self.bump {
         self.shuttleStats.frames += 1
         if !result.candidates.isEmpty { self.shuttleStats.withCandidates += 1 }
@@ -730,6 +756,28 @@ final class CaptureController: NSObject {
 }
 
 extension CaptureController {
+  /// Average colour of a person's torso as (luma, blue chroma, red chroma), 0 to 255. `box` is normalised to the picture, origin bottom left.
+  static func torsoColour(of buffer: CVPixelBuffer, box b: CGRect) -> (Double, Double, Double)? {
+    guard let base = CVPixelBufferGetBaseAddress(buffer) else { return nil }
+    let w = CVPixelBufferGetWidth(buffer), h = CVPixelBufferGetHeight(buffer)
+    let stride = CVPixelBufferGetBytesPerRow(buffer)
+    // the middle of the box, from just below the head to the waist
+    let x0 = max(0, Int((b.minX + 0.25 * b.width) * CGFloat(w))), x1 = min(w - 1, Int((b.maxX - 0.25 * b.width) * CGFloat(w)))
+    let top = (1 - b.maxY) * CGFloat(h)
+    let y0 = max(0, Int(top + 0.2 * b.height * CGFloat(h))), y1 = min(h - 1, Int(top + 0.55 * b.height * CGFloat(h)))
+    if x1 <= x0 || y1 <= y0 { return nil }
+    var r = 0.0, g = 0.0, bl = 0.0, n = 0.0
+    for y in Swift.stride(from: y0, through: y1, by: 2) {
+      let row = base.advanced(by: y * stride).assumingMemoryBound(to: UInt8.self)
+      for x in Swift.stride(from: x0, through: x1, by: 2) {
+        bl += Double(row[x * 4]); g += Double(row[x * 4 + 1]); r += Double(row[x * 4 + 2]); n += 1   // BGRA
+      }
+    }
+    if n == 0 { return nil }
+    r /= n; g /= n; bl /= n
+    return (0.299 * r + 0.587 * g + 0.114 * bl, 128 - 0.168736 * r - 0.331264 * g + 0.5 * bl, 128 + 0.5 * r - 0.418688 * g - 0.081312 * bl)
+  }
+
   /// The error with its code and the error underneath it, for example "AVFoundationErrorDomain -11800 / NSOSStatusErrorDomain -12780, 3.2 GB free".
   static func describe(_ error: Error?) -> String {
     guard let ns = error as NSError? else { return "unknown reason" }

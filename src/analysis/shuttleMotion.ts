@@ -10,6 +10,21 @@
  *  3. Chain blobs from frame to frame into a path that moves smoothly and fast. Three matching frames in a row confirm a track.
  */
 
+/** A rectangle in the pixels of the area being watched. */
+export interface Box { x: number; y: number; w: number; h: number }
+
+/**
+ * Where a player is, widened to cover the arms and racket. Movement inside these boxes is the player, not the shuttle:
+ * it does not count towards "the picture shook", and blobs inside it cannot start a new track (an existing track can still pass through).
+ */
+export function playerMask(person: Box, bounds: { w: number; h: number }): Box {
+  const x0 = Math.max(0, person.x - 0.5 * person.w);
+  const x1 = Math.min(bounds.w, person.x + 1.5 * person.w);
+  const y0 = Math.max(0, person.y - 0.25 * person.h);
+  const y1 = Math.min(bounds.h, person.y + 1.05 * person.h);
+  return { x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) };
+}
+
 export interface Candidate {
   x: number;
   y: number;
@@ -17,6 +32,8 @@ export interface Candidate {
   area: number;
   /** Average brightness change of those pixels. */
   contrast: number;
+  /** Inside a player's box: probably a hand, a racket or a foot. */
+  inPlayer?: boolean;
 }
 
 export interface MotionOptions {
@@ -93,6 +110,7 @@ export class MotionShuttleTracker {
   private track: Track | undefined;
   private seeds: Seed[] = [];
   private recent: Candidate[][] = [];
+  private maskHistory: Box[][] = [];
   private o: MotionOptions;
 
   constructor(options: Partial<MotionOptions> = {}) {
@@ -104,10 +122,11 @@ export class MotionShuttleTracker {
     this.track = undefined;
     this.seeds = [];
     this.recent = [];
+    this.maskHistory = [];
   }
 
   /** `luma` is the brightness of the area to watch, one byte per pixel, `w` x `h`. `t` is its time in seconds. */
-  update(luma: Uint8Array, w: number, h: number, t: number): MotionResult {
+  update(luma: Uint8Array, w: number, h: number, t: number, masks: Box[] = []): MotionResult {
     const prev = this.prev;
     const prev2 = this.prev2;
     const obsT = this.prevT; // the blob found now is where the shuttle was in the middle frame
@@ -122,6 +141,15 @@ export class MotionShuttleTracker {
     const cs = o.cellSize;
     const cw = Math.ceil(w / cs);
     const ch = Math.ceil(h / cs);
+    // The change between frames also shows where a player was a moment ago, so keep the last few positions of each mask
+    this.maskHistory.push(masks);
+    if (this.maskHistory.length > 3) this.maskHistory.shift();
+    const covered = new Uint8Array(cw * ch);
+    for (const m of this.maskHistory.flat()) {
+      for (let cy = Math.max(0, Math.floor(m.y / cs)); cy <= Math.min(ch - 1, Math.floor((m.y + m.h) / cs)); cy++) {
+        for (let cx = Math.max(0, Math.floor(m.x / cs)); cx <= Math.min(cw - 1, Math.floor((m.x + m.w) / cs)); cx++) covered[cy * cw + cx] = 1;
+      }
+    }
     const cellCount = new Uint16Array(cw * ch);
     const cellDiff = new Uint32Array(cw * ch);
     let active = 0;
@@ -133,8 +161,8 @@ export class MotionShuttleTracker {
         const d1 = Math.abs(luma[i] - prev[i]);
         if (d1 <= o.diffThreshold) continue;
         if (Math.abs(prev[i] - prev2[i]) <= o.diffThreshold) continue;
-        active++;
         const c = cellRow + Math.floor(x / cs);
+        if (!covered[c]) active++; // players moving must not make the picture look shaken
         cellCount[c]++;
         cellDiff[c] += d1;
       }
@@ -146,12 +174,12 @@ export class MotionShuttleTracker {
       return { candidates: [], track: this.track, activeFraction, shaky: true };
     }
 
-    const candidates = this.dropBackground(this.blobs(cellCount, cellDiff, cw, ch));
+    const candidates = this.dropBackground(this.blobs(cellCount, cellDiff, cw, ch, covered));
     this.follow(candidates, obsT);
     return { candidates, track: this.track, activeFraction, shaky: false };
   }
 
-  private blobs(count: Uint16Array, diff: Uint32Array, cw: number, ch: number): Candidate[] {
+  private blobs(count: Uint16Array, diff: Uint32Array, cw: number, ch: number, covered: Uint8Array): Candidate[] {
     const o = this.o;
     const cs = o.cellSize;
     const seen = new Uint8Array(cw * ch);
@@ -188,9 +216,14 @@ export class MotionShuttleTracker {
       }
       const size = Math.max(maxX - minX + 1, maxY - minY + 1) * cs;
       if (area < o.minArea || area > o.maxArea || size > o.maxSize) continue;
-      out.push({ x: (sx / area) * cs, y: (sy / area) * cs, area, contrast: sumDiff / area });
+      const cxm = Math.min(cw - 1, Math.floor(sx / area));
+      const cym = Math.min(ch - 1, Math.floor(sy / area));
+      const inPlayer = covered[cym * cw + cxm] === 1;
+      out.push({ x: (sx / area) * cs, y: (sy / area) * cs, area, contrast: sumDiff / area, ...(inPlayer ? { inPlayer } : {}) });
     }
-    out.sort((a, b) => b.contrast * b.area - a.contrast * a.area);
+    // blobs on a player come last, so they do not crowd the shuttle out of the list
+    const score = (c: Candidate) => c.contrast * c.area * (c.inPlayer ? 0.25 : 1);
+    out.sort((a, b) => score(b) - score(a));
     return out.slice(0, o.maxCandidates);
   }
 
@@ -237,14 +270,15 @@ export class MotionShuttleTracker {
       return;
     }
 
-    // no track yet: grow short chains of blobs that move the same way
+    // no track yet: grow short chains of blobs that move the same way. Blobs on a player never start one.
+    const free = cands.filter((c) => !c.inPlayer);
     const next: Seed[] = [];
     const used = new Set<number>();
     for (const s of this.seeds) {
       const dt = Math.max(1e-3, t - s.t);
       let best = -1;
       let bestScore = Infinity;
-      cands.forEach((c, i) => {
+      free.forEach((c, i) => {
         if (used.has(i)) return;
         const dx = c.x - s.x;
         const dy = c.y - s.y;
@@ -260,7 +294,7 @@ export class MotionShuttleTracker {
       });
       if (best >= 0) {
         used.add(best);
-        const c = cands[best];
+        const c = free[best];
         const seed: Seed = { x: c.x, y: c.y, t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1 };
         if (seed.hits >= o.confirmHits) {
           this.track = { x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t, born: t };
@@ -270,7 +304,7 @@ export class MotionShuttleTracker {
         next.push(seed);
       }
     }
-    cands.forEach((c, i) => {
+    free.forEach((c, i) => {
       if (!used.has(i) && next.length < 24) next.push({ x: c.x, y: c.y, t, vx: 0, vy: 0, hits: 1 });
     });
     this.seeds = next;

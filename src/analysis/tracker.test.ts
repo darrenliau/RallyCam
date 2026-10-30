@@ -122,3 +122,75 @@ describe('DetectorPlayerTracker', () => {
     expect(stopped).toBe(true);
   });
 });
+
+describe('players crossing over', () => {
+  const RED: [number, number, number] = [110, 90, 200];
+  const BLUE: [number, number, number] = [110, 200, 90];
+  const withLook = (d: Detection, look: [number, number, number]): Detection => ({ ...d, look });
+
+  it('keeps each player when two walk past each other', () => {
+    const core = new PlayerTrackerCore({ nNear: 2, nFar: 0 });
+    let t: Track[] = [];
+    for (let i = 0; i <= 40; i++) {
+      const k = i / 40;
+      t = core.update([personAt(0.3 + 0.4 * k, 0.84), personAt(0.7 - 0.4 * k, 0.88)], map, g);
+    }
+    const ids = byId(t);
+    expect(ids[0].u).toBeGreaterThan(0.6); // started left, now on the right
+    expect(ids[1].u).toBeLessThan(0.4);
+  });
+
+  it('keeps each player when the detector sees one merged box while they overlap', () => {
+    const core = new PlayerTrackerCore({ nNear: 2, nFar: 0 });
+    let t: Track[] = [];
+    for (let i = 0; i <= 40; i++) {
+      const k = i / 40;
+      const a = 0.3 + 0.4 * k;
+      const b = 0.7 - 0.4 * k;
+      const together = Math.abs(a - b) < 0.12; // boxes overlap: the detector returns one box
+      t = core.update(together ? [personAt((a + b) / 2, 0.86)] : [personAt(a, 0.84), personAt(b, 0.88)], map, g);
+    }
+    expect(t).toHaveLength(2);
+    expect(byId(t)[0].u).toBeGreaterThan(0.6);
+    expect(byId(t)[1].u).toBeLessThan(0.4);
+  });
+
+  it('does not start a third player from the merged box', () => {
+    const core = new PlayerTrackerCore({ nNear: 2, nFar: 0 });
+    for (let i = 0; i < 5; i++) core.update([personAt(0.4, 0.85), personAt(0.6, 0.85)], map, g);
+    for (let i = 0; i < 6; i++) expect(core.update([personAt(0.5, 0.85)], map, g)).toHaveLength(2);
+  });
+
+  const bounce = (looks: boolean) => {
+    const core = new PlayerTrackerCore({ nNear: 2, nFar: 0 });
+    let t: Track[] = [];
+    const frame = (a: number, b: number, merged = false) => {
+      const da = looks ? withLook(personAt(a, 0.85), RED) : personAt(a, 0.85);
+      const db = looks ? withLook(personAt(b, 0.85), BLUE) : personAt(b, 0.85);
+      t = core.update(merged ? [looks ? withLook(personAt((a + b) / 2, 0.85), RED) : personAt((a + b) / 2, 0.85)] : [da, db], map, g);
+    };
+    for (let i = 0; i < 10; i++) frame(0.3 + 0.02 * i, 0.7 - 0.02 * i);          // walk towards each other
+    for (let i = 0; i < 6; i++) frame(0.5, 0.5, true);                               // overlap
+    for (let i = 0; i < 12; i++) frame(0.48 - 0.02 * i, 0.52 + 0.02 * i);        // and each goes back where they came from
+    return byId(t);
+  };
+
+  it('uses shirt colour to tell them apart when they turn back instead of passing', () => {
+    const t = bounce(true);
+    expect(t[0].u).toBeLessThan(0.5); // red player came from the left and went back left
+    expect(t[1].u).toBeGreaterThan(0.5);
+  });
+
+  it('without colour, a turn-back after overlapping is not recoverable (documented limit)', () => {
+    const t = bounce(false);
+    expect(t[0].u).toBeGreaterThan(0.5); // the ids followed the straight-through guess
+  });
+});
+
+describe('lookDistance', () => {
+  it('is 0 for the same colours and 1 for very different ones', async () => {
+    const { lookDistance } = await import('./tracker');
+    expect(lookDistance([100, 100, 100], [100, 100, 100])).toBe(0);
+    expect(lookDistance([100, 90, 200], [100, 200, 90])).toBe(1);
+  });
+});

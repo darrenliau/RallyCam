@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { MotionShuttleTracker } from './shuttleMotion';
+import { MotionShuttleTracker, playerMask } from './shuttleMotion';
 
 const W = 640;
 const H = 360;
@@ -87,6 +87,52 @@ describe('MotionShuttleTracker', () => {
     }
     expect(sawTrack).toBe(true);
     expect(droppedAfter).toBe(true);
+  });
+
+  it('does not call the picture shaken when only a player moves, if the player is masked', () => {
+    const run = (masked: boolean) => {
+      const rand = rng(7);
+      const tracker = new MotionShuttleTracker();
+      let shaky = 0;
+      for (let i = 0; i < 30; i++) {
+        const x = 100 + i * 12; // a big player running fast
+        const player: Blob = { x, y: 120, w: 60, h: 120, value: i % 2 ? 30 : 200 };
+        const masks = masked ? [playerMask({ x, y: 120, w: 60, h: 120 }, { w: W, h: H })] : [];
+        if (tracker.update(frame([player], rand), W, H, i / 60, masks).shaky) shaky++;
+      }
+      return shaky;
+    };
+    expect(run(false)).toBeGreaterThan(5);
+    expect(run(true)).toBe(0);
+  });
+
+  it('does not start a track on a racket swinging inside a player\'s box, but still follows a shuttle outside it', () => {
+    const rand = rng(8);
+    const tracker = new MotionShuttleTracker();
+    const body = { x: 280, y: 100, w: 50, h: 110 };
+    const mask = playerMask(body, { w: W, h: H });
+    let confirmedAtInside = 0;
+    for (let i = 0; i < 12; i++) {
+      // a small bright racket head sweeping fast beside the body, within the widened box
+      const head: Blob = { x: 250 + i * 8, y: 90 + i * 3, w: 4, h: 4, value: 240 };
+      const r = tracker.update(frame([head], rand), W, H, i / 60, [mask]);
+      if (r.track?.confirmed) confirmedAtInside++;
+    }
+    expect(confirmedAtInside).toBe(0);
+    let tracked = 0;
+    for (let i = 12; i < 50; i++) {
+      const r = tracker.update(frame([shuttleAt(i - 12, 12)], rand), W, H, i / 60, [mask]);
+      if (r.track?.confirmed) tracked++;
+    }
+    expect(tracked).toBeGreaterThan(10);
+  });
+
+  it('widens a player box for the arms and racket, and keeps it inside the picture', () => {
+    const m = playerMask({ x: 10, y: 10, w: 40, h: 100 }, { w: 640, h: 360 });
+    expect(m.x).toBe(0);
+    expect(m.y).toBe(0);
+    expect(m.w).toBeGreaterThan(60);
+    expect(m.y + m.h).toBeGreaterThan(110);
   });
 
   it('does not invent a track from noise alone', () => {

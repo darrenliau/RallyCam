@@ -9,6 +9,8 @@ struct ShuttleCandidate {
   var y: Double
   var area: Int
   var contrast: Double
+  /// Inside a player's box: probably a hand, a racket or a foot.
+  var inPlayer = false
 }
 
 struct ShuttleTrack {
@@ -39,6 +41,15 @@ private struct Seed {
   var hits: Int
 }
 
+/// Where a player is, widened to cover the arms and racket, in the pixels of the watched area (see playerMask in shuttleMotion.ts).
+func playerMask(_ person: CGRect, boundsW: CGFloat, boundsH: CGFloat) -> CGRect {
+  let x0 = max(0, person.minX - 0.5 * person.width)
+  let x1 = min(boundsW, person.minX + 1.5 * person.width)
+  let y0 = max(0, person.minY - 0.25 * person.height)
+  let y1 = min(boundsH, person.minY + 1.05 * person.height)
+  return CGRect(x: x0, y: y0, width: max(0, x1 - x0), height: max(0, y1 - y0))
+}
+
 final class MotionShuttleTracker {
   // the same numbers as DEFAULT_MOTION in shuttleMotion.ts
   private let diffThreshold = 24
@@ -65,16 +76,18 @@ final class MotionShuttleTracker {
   private(set) var track: ShuttleTrack?
   private var seeds: [Seed] = []
   private var recent: [[ShuttleCandidate]] = []
+  private var maskHistory: [[CGRect]] = []
 
   func reset() {
     haveFrames = 0
     track = nil
     seeds = []
     recent = []
+    maskHistory = []
   }
 
   /// `plane` is the camera's luma plane. (x0, y0, w, h) is the area to watch, in pixels. `t` is the frame time in seconds.
-  func update(plane: UnsafePointer<UInt8>, stride: Int, x0: Int, y0: Int, w: Int, h: Int, t: Double) -> ShuttleResult {
+  func update(plane: UnsafePointer<UInt8>, stride: Int, x0: Int, y0: Int, w: Int, h: Int, t: Double, masks: [CGRect] = []) -> ShuttleResult {
     if w != width || h != height {
       width = w
       height = h
@@ -97,6 +110,16 @@ final class MotionShuttleTracker {
 
     let cw = (w + cellSize - 1) / cellSize
     let ch = (h + cellSize - 1) / cellSize
+    // The change between frames also shows where a player was a moment ago, so keep the last few positions of each mask
+    maskHistory.append(masks)
+    if maskHistory.count > 3 { maskHistory.removeFirst() }
+    var covered = [Bool](repeating: false, count: cw * ch)
+    for m in maskHistory.joined() {
+      let cx0 = max(0, Int(m.minX) / cellSize), cx1 = min(cw - 1, Int(m.maxX) / cellSize)
+      let cy0 = max(0, Int(m.minY) / cellSize), cy1 = min(ch - 1, Int(m.maxY) / cellSize)
+      if cx0 > cx1 || cy0 > cy1 { continue }
+      for cy in cy0...cy1 { for cx in cx0...cx1 { covered[cy * cw + cx] = true } }
+    }
     var cellCount = [UInt16](repeating: 0, count: cw * ch)
     var cellDiff = [UInt32](repeating: 0, count: cw * ch)
     var active = 0
@@ -112,8 +135,8 @@ final class MotionShuttleTracker {
               let d1 = abs(Int(cur[i]) - Int(prev[i]))
               if d1 <= diffThreshold { continue }
               if abs(Int(prev[i]) - Int(prev2[i])) <= diffThreshold { continue }
-              active += 1
               let c = cellRow + x / cellSize
+              if !covered[c] { active += 1 }   // players moving must not make the picture look shaken
               cellCount[c] += 1
               cellDiff[c] += UInt32(d1)
             }
@@ -128,12 +151,12 @@ final class MotionShuttleTracker {
       return ShuttleResult(candidates: [], track: track, activeFraction: activeFraction, shaky: true)
     }
 
-    let candidates = dropBackground(blobs(count: cellCount, diff: cellDiff, cw: cw, ch: ch))
+    let candidates = dropBackground(blobs(count: cellCount, diff: cellDiff, cw: cw, ch: ch, covered: covered))
     follow(candidates, t: obsT)
     return ShuttleResult(candidates: candidates, track: track, activeFraction: activeFraction, shaky: false)
   }
 
-  private func blobs(count: [UInt16], diff: [UInt32], cw: Int, ch: Int) -> [ShuttleCandidate] {
+  private func blobs(count: [UInt16], diff: [UInt32], cw: Int, ch: Int, covered: [Bool]) -> [ShuttleCandidate] {
     var seen = [Bool](repeating: false, count: cw * ch)
     var out: [ShuttleCandidate] = []
     var stack: [Int] = []
@@ -169,14 +192,19 @@ final class MotionShuttleTracker {
       }
       let size = max(maxX - minX + 1, maxY - minY + 1) * cellSize
       if area < minArea || area > maxArea || size > maxSize { continue }
+      let cxm = min(cw - 1, Int(sx / Double(area)))
+      let cym = min(ch - 1, Int(sy / Double(area)))
       out.append(ShuttleCandidate(
         x: sx / Double(area) * Double(cellSize),
         y: sy / Double(area) * Double(cellSize),
         area: area,
-        contrast: Double(sumDiff) / Double(area)
+        contrast: Double(sumDiff) / Double(area),
+        inPlayer: covered[cym * cw + cxm]
       ))
     }
-    out.sort { $0.contrast * Double($0.area) > $1.contrast * Double($1.area) }
+    // blobs on a player come last, so they do not crowd the shuttle out of the list
+    func score(_ c: ShuttleCandidate) -> Double { c.contrast * Double(c.area) * (c.inPlayer ? 0.25 : 1) }
+    out.sort { score($0) > score($1) }
     return Array(out.prefix(maxCandidates))
   }
 
@@ -220,14 +248,15 @@ final class MotionShuttleTracker {
       return
     }
 
-    // no track yet: grow short chains of blobs that move the same way
+    // no track yet: grow short chains of blobs that move the same way. Blobs on a player never start one.
+    let free = cands.filter { !$0.inPlayer }
     var next: [Seed] = []
     var used = Set<Int>()
     for s in seeds {
       let dt = max(1e-3, t - s.t)
       var best = -1
       var bestScore = Double.infinity
-      for (i, c) in cands.enumerated() where !used.contains(i) {
+      for (i, c) in free.enumerated() where !used.contains(i) {
         let dx = c.x - s.x
         let dy = c.y - s.y
         let step = hypot(dx, dy)
@@ -242,7 +271,7 @@ final class MotionShuttleTracker {
       }
       if best >= 0 {
         used.insert(best)
-        let c = cands[best]
+        let c = free[best]
         let seed = Seed(x: c.x, y: c.y, t: t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1)
         if seed.hits >= confirmHits {
           track = ShuttleTrack(x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t: t, born: t)
@@ -252,7 +281,7 @@ final class MotionShuttleTracker {
         next.append(seed)
       }
     }
-    for (i, c) in cands.enumerated() where !used.contains(i) && next.count < 24 {
+    for (i, c) in free.enumerated() where !used.contains(i) && next.count < 24 {
       next.append(Seed(x: c.x, y: c.y, t: t, vx: 0, vy: 0, hits: 1))
     }
     seeds = next

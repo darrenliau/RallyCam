@@ -9,6 +9,8 @@ export interface Detection {
   h: number;
   /** Detector confidence, 0..1. */
   score: number;
+  /** Average colour of the torso as [luma, blue chroma, red chroma], 0..255. Helps tell players apart when they cross. */
+  look?: [number, number, number];
 }
 
 /**
