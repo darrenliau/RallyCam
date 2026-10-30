@@ -10,6 +10,8 @@
  *  3. Chain blobs from frame to frame into a path that moves smoothly and fast. Three matching frames in a row confirm a track.
  */
 
+import { looksLikeFlight, type PathPoint } from './shuttlePath';
+
 /** A rectangle in the pixels of the area being watched. */
 export interface Box { x: number; y: number; w: number; h: number }
 
@@ -67,6 +69,8 @@ export interface MotionOptions {
   activityDecay: number;
   /** A candidate in or next to a square this active is background. A shuttle crosses a square in a frame or two and never reaches this. */
   activityLimit: number;
+  /** A track is dropped when its last `pathWindow` positions do not fit a smooth curve (see shuttlePath.ts). 0 turns the check off. */
+  pathWindow: number;
 }
 
 export const DEFAULT_MOTION: MotionOptions = {
@@ -90,6 +94,7 @@ export const DEFAULT_MOTION: MotionOptions = {
   activityRise: 0.03,
   activityDecay: 0.01,
   activityLimit: 0.06,
+  pathWindow: 10,
 };
 
 export interface Track {
@@ -115,7 +120,7 @@ export interface MotionResult {
   shaky: boolean;
 }
 
-interface Seed { x: number; y: number; t: number; vx: number; vy: number; hits: number }
+interface Seed { x: number; y: number; t: number; vx: number; vy: number; hits: number; path: PathPoint[] }
 
 export class MotionShuttleTracker {
   private prev: Uint8Array | null = null;
@@ -126,6 +131,7 @@ export class MotionShuttleTracker {
   private recent: Candidate[][] = [];
   private maskHistory: Box[][] = [];
   private activity = new Float32Array(0);
+  private path: PathPoint[] = [];
   private bins = { w: 0, h: 0 };
   private o: MotionOptions;
 
@@ -140,6 +146,7 @@ export class MotionShuttleTracker {
     this.recent = [];
     this.maskHistory = [];
     this.activity = new Float32Array(0);
+    this.path = [];
   }
 
   /** `luma` is the brightness of the area to watch, one byte per pixel, `w` x `h`. `t` is its time in seconds. */
@@ -318,6 +325,15 @@ export class MotionShuttleTracker {
       if (best && bestD <= o.gate * 0.6 + tr.misses * 20) {
         const vx = (best.x - tr.x) / dt;
         const vy = (best.y - tr.y) / dt;
+        this.path.push({ t, x: best.x, y: best.y });
+        if (this.path.length > o.pathWindow) this.path.shift();
+        if (o.pathWindow > 0 && !looksLikeFlight(this.path)) {
+          // hopping between unrelated specks, not a flight: forget it and look again
+          this.track = undefined;
+          this.seeds = [];
+          this.path = [];
+          return;
+        }
         this.track = { x: best.x, y: best.y, vx: 0.6 * vx + 0.4 * tr.vx, vy: 0.6 * vy + 0.4 * tr.vy, hits: tr.hits + 1, misses: 0, confirmed: true, t, born: tr.born };
       } else {
         this.miss();
@@ -351,8 +367,9 @@ export class MotionShuttleTracker {
       if (best >= 0) {
         used.add(best);
         const c = free[best];
-        const seed: Seed = { x: c.x, y: c.y, t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1 };
+        const seed: Seed = { x: c.x, y: c.y, t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1, path: [...s.path, { t, x: c.x, y: c.y }].slice(-o.pathWindow) };
         if (seed.hits >= o.confirmHits) {
+          this.path = seed.path;
           this.track = { x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t, born: t };
           this.seeds = [];
           return;
@@ -361,7 +378,7 @@ export class MotionShuttleTracker {
       }
     }
     free.forEach((c, i) => {
-      if (!used.has(i) && next.length < 24) next.push({ x: c.x, y: c.y, t, vx: 0, vy: 0, hits: 1 });
+      if (!used.has(i) && next.length < 24) next.push({ x: c.x, y: c.y, t, vx: 0, vy: 0, hits: 1, path: [{ t, x: c.x, y: c.y }] });
     });
     this.seeds = next;
   }

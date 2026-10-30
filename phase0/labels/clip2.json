@@ -1,0 +1,39 @@
+{
+ "clip": "mvun78i1-i7qtbcyz_2.mp4",
+ "fps": 60,
+ "partial": true,
+ "note": "Seed labels: shuttle positions taken from tracker tracks that were checked by eye on frames (a white shuttlecock was visible at the marked spot). Only the shuttle flights the tracker found are listed, so recall is flattered and tracks outside the listed intervals are not necessarily false. Replace with full labels from a longer clip.",
+ "playIntervals": [
+  [
+   8.95,
+   9.467
+  ]
+ ],
+ "points": [
+  {
+   "t": 9.1,
+   "x": 783.6,
+   "y": 392.2
+  },
+  {
+   "t": 9.1667,
+   "x": 808,
+   "y": 358.4
+  },
+  {
+   "t": 9.2333,
+   "x": 827.5,
+   "y": 335.7
+  },
+  {
+   "t": 9.3,
+   "x": 842.4,
+   "y": 320.4
+  },
+  {
+   "t": 9.3167,
+   "x": 845.5,
+   "y": 317.3
+  }
+ ]
+}

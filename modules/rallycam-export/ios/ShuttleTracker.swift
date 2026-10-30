@@ -32,6 +32,12 @@ struct ShuttleResult {
   var shaky: Bool
 }
 
+struct PathPoint {
+  var t: Double
+  var x: Double
+  var y: Double
+}
+
 private struct Seed {
   var x: Double
   var y: Double
@@ -39,6 +45,48 @@ private struct Seed {
   var vx: Double
   var vy: Double
   var hits: Int
+  var path: [PathPoint]
+}
+
+/// Least squares quadratic a + b*u + c*u^2 through (u, v) pairs (see quadratic in shuttlePath.ts).
+private func quadraticFit(_ u: [Double], _ v: [Double]) -> (Double, Double, Double) {
+  var s0 = 0.0, s1 = 0.0, s2 = 0.0, s3 = 0.0, s4 = 0.0, t0 = 0.0, t1 = 0.0, t2 = 0.0
+  for i in 0..<u.count {
+    let x = u[i], y = v[i], x2 = x * x
+    s0 += 1; s1 += x; s2 += x2; s3 += x2 * x; s4 += x2 * x2
+    t0 += y; t1 += x * y; t2 += x2 * y
+  }
+  func det(_ a: [[Double]]) -> Double {
+    a[0][0] * (a[1][1] * a[2][2] - a[1][2] * a[2][1]) - a[0][1] * (a[1][0] * a[2][2] - a[1][2] * a[2][0]) + a[0][2] * (a[1][0] * a[2][1] - a[1][1] * a[2][0])
+  }
+  let m = [[s0, s1, s2], [s1, s2, s3], [s2, s3, s4]]
+  let d = det(m)
+  if abs(d) < 1e-12 { return (t0 / s0, 0, 0) }
+  let rhs = [t0, t1, t2]
+  func col(_ k: Int) -> [[Double]] { (0..<3).map { r in (0..<3).map { c in c == k ? rhs[r] : m[r][c] } } }
+  return (det(col(0)) / d, det(col(1)) / d, det(col(2)) / d)
+}
+
+/// True when the positions are a believable flight: they fit a smooth curve to within a little more than the measurement
+/// noise, relative to how far the shuttle moves between samples (see looksLikeFlight in shuttlePath.ts).
+func looksLikeFlight(_ points: [PathPoint]) -> Bool {
+  if points.count < 4 { return true }
+  let t0 = points[0].t
+  let u = points.map { $0.t - t0 }
+  let (ax, bx, cx) = quadraticFit(u, points.map { $0.x })
+  let (ay, by, cy) = quadraticFit(u, points.map { $0.y })
+  var sum = 0.0
+  for (i, p) in points.enumerated() {
+    let w = u[i]
+    let dx = p.x - (ax + bx * w + cx * w * w)
+    let dy = p.y - (ay + by * w + cy * w * w)
+    sum += dx * dx + dy * dy
+  }
+  let rms = (sum / Double(points.count)).squareRoot()
+  var steps = 0.0
+  for i in 1..<points.count { steps += hypot(points[i].x - points[i - 1].x, points[i].y - points[i - 1].y) }
+  let meanStep = steps / Double(points.count - 1)
+  return rms <= 3 + 0.2 * meanStep
 }
 
 /// Where a player is, widened to cover the arms and racket, in the pixels of the watched area (see playerMask in shuttleMotion.ts).
@@ -73,6 +121,7 @@ final class MotionShuttleTracker {
   private let activityRise: Float = 0.03
   private let activityDecay: Float = 0.01
   private let activityLimit: Float = 0.06
+  private let pathWindow = 10
 
   private var frames: [[UInt8]] = [[], [], []]   // newest, previous, the one before
   private var width = 0
@@ -86,6 +135,7 @@ final class MotionShuttleTracker {
   private var activity: [Float] = []
   private var binsW = 0
   private var binsH = 0
+  private var path: [PathPoint] = []
 
   func reset() {
     haveFrames = 0
@@ -96,6 +146,7 @@ final class MotionShuttleTracker {
     activity = []
     binsW = 0
     binsH = 0
+    path = []
   }
 
   /// `plane` is the camera's luma plane. (x0, y0, w, h) is the area to watch, in pixels. `t` is the frame time in seconds.
@@ -287,6 +338,15 @@ final class MotionShuttleTracker {
       if let best, bestD <= gate * 0.6 + Double(tr.misses) * 20 {
         let vx = (best.x - tr.x) / dt
         let vy = (best.y - tr.y) / dt
+        path.append(PathPoint(t: t, x: best.x, y: best.y))
+        if path.count > pathWindow { path.removeFirst() }
+        if !looksLikeFlight(path) {
+          // hopping between unrelated specks, not a flight: forget it and look again
+          track = nil
+          seeds = []
+          path = []
+          return
+        }
         track = ShuttleTrack(x: best.x, y: best.y, vx: 0.6 * vx + 0.4 * tr.vx, vy: 0.6 * vy + 0.4 * tr.vy, hits: tr.hits + 1, misses: 0, confirmed: true, t: t, born: tr.born)
       } else {
         miss()
@@ -319,8 +379,9 @@ final class MotionShuttleTracker {
       if best >= 0 {
         used.insert(best)
         let c = free[best]
-        let seed = Seed(x: c.x, y: c.y, t: t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1)
+        let seed = Seed(x: c.x, y: c.y, t: t, vx: (c.x - s.x) / dt, vy: (c.y - s.y) / dt, hits: s.hits + 1, path: Array((s.path + [PathPoint(t: t, x: c.x, y: c.y)]).suffix(pathWindow)))
         if seed.hits >= confirmHits {
+          path = seed.path
           track = ShuttleTrack(x: seed.x, y: seed.y, vx: seed.vx, vy: seed.vy, hits: seed.hits, misses: 0, confirmed: true, t: t, born: t)
           seeds = []
           return
@@ -329,7 +390,7 @@ final class MotionShuttleTracker {
       }
     }
     for (i, c) in free.enumerated() where !used.contains(i) && next.count < 24 {
-      next.append(Seed(x: c.x, y: c.y, t: t, vx: 0, vy: 0, hits: 1))
+      next.append(Seed(x: c.x, y: c.y, t: t, vx: 0, vy: 0, hits: 1, path: [PathPoint(t: t, x: c.x, y: c.y)]))
     }
     seeds = next
   }

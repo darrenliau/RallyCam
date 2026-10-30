@@ -197,3 +197,11 @@ From the second shuttle log (`phase0/data/second-session.shuttle.csv.gz`, 12.7 m
 ## Far player detection
 
 The person detector now looks at the court twice (`CaptureController.detectIfDue`): the whole court area as before, and the far 55% again in two overlapping pieces, each scaled up to 1280 px wide (up to 1.6x). People whose middle is in the far part come from the zoomed pass, everyone else from the whole-court pass; the zoomed pass runs every other time and its result is reused for 0.35 s. This is meant to find the far-end player, who is small in the picture. If it costs too much frame rate, the debug panel's fps chip will show it.
+
+## Measuring the shuttle tracker, and the path check
+
+**Path check.** A real shuttle follows a smooth curve; noise hops between unrelated specks. After each hit the tracker fits a quadratic curve through the last 10 positions (`src/analysis/shuttlePath.ts`) and drops the track if the points sit too far from it (more than 3 px plus 20% of the typical step). Swift copy in `ShuttleTracker.swift`. `bridgeGaps` in the same file fills short gaps along the fitted curve for the after-game pass; it is not used by the live tracker yet.
+
+**Measuring.** `npx tsx tools/evaluate-shuttle.ts clip.mp4 phase0/labels/clipN.json [--compare]` runs the tracker over a clip and scores it against labels (`src/analysis/shuttleEval.ts`): how many labelled shuttle positions had a candidate, how many the track was on, what share of track frames were on the shuttle's path, and how many separate false tracks there were. `--compare` also runs with the path check off. A label file lists when the shuttle is in the air and its position at some moments, in pixels of the 1920 x 1080 frame.
+
+The labels in `phase0/labels/` are **seed labels** made from tracks I checked by eye on frames, so they are partial and recall is flattered (the labelled spots are ones the tracker found). On the three real-court clips, the path check changed precision from 15% to 93% (clip 2) and from 45% to 86% (clip 5), false tracks from 5 to 1 and from 12 to 4, with every labelled shuttle position still tracked. Proper labels from a longer clip are needed for real recall numbers.
