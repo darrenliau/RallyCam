@@ -180,6 +180,8 @@ function merged<T>(segs: Seg[], key: (s: Seg) => T): { start: number; end: numbe
 // --- overlay pieces -------------------------------------------------------------------------------------------
 
 const BACK = '#05090A';
+/** The shuttle's colour on screen: its trail, ring and tag. */
+export const SHUTTLE_COLOR = '#FFD166';
 const MUTED = '#8FA198';
 const SOFT = '#C6D3CC';
 const LIME = '#C8F04A';
@@ -347,6 +349,27 @@ export function buildScene(input: AssInput): Scene {
   return { width: resX, height: resY, items: c.items };
 }
 
+/** The text on the shuttle's marker: its name, and its speed once there is one. */
+export function shuttleLabelText(speedKmh?: number): string {
+  return speedKmh && speedKmh > 0 ? `SHUTTLE · ${speedKmh} km/h` : 'SHUTTLE';
+}
+
+/** A ring on the shuttle's latest position with a small tag above it. `p` is in the canvas pixels of the scene. */
+function shuttleMarker(c: Ctx, p: Pos, text: string, a: number, b: number, canvasW: number) {
+  const k = c.k;
+  const r = 11 * k;
+  shape(c, 30, a, b, ellipse(r, r), { x: p.x - r, y: p.y - r }, SHUTTLE_COLOR, 0, { stroke: { width: 2.5 * k, color: SHUTTLE_COLOR } });
+  const tw = (text.length * 6.6 + 18) * k;
+  const th = 22 * k;
+  // keep the tag inside the picture, and put it below the ring when the shuttle is near the top
+  const x = Math.min(Math.max(p.x - tw / 2, 4 * k), canvasW - tw - 4 * k);
+  const above = p.y - r - th - 6 * k;
+  const y = above >= 4 * k ? above : p.y + r + 6 * k;
+  shape(c, 31, a, b, roundRect(tw, th, 6 * k), { x, y }, BACK, 0.85);
+  shape(c, 32, a, b, `m 0 0 l ${n1(4 * k)} 0 l ${n1(4 * k)} ${n1(th)} l 0 ${n1(th)}`, { x, y }, SHUTTLE_COLOR, 1);
+  label(c, 33, a, b, text, { x: x + tw / 2 + 2 * k, y: y + 3 * k }, 12, '#FFFFFF', { bold: true, anchor: 8 });
+}
+
 /** Longer than any game: items of a live scene stay on screen until the next one replaces them. */
 const LIVE_END = 1e9;
 
@@ -392,8 +415,10 @@ export function buildLiveScene(input: LiveInput): Scene {
   (input.trail ?? []).forEach((p, i, all) => {
     const age = (i + 1) / all.length; // 1 for the newest
     const r = (2 + 4 * age) * k;
-    shape(c, 30, 0, LIVE_END, ellipse(r, r), { x: p.x * resX - r, y: p.y * resY - r }, '#FFD166', 0.25 + 0.7 * age);
+    shape(c, 30, 0, LIVE_END, ellipse(r, r), { x: p.x * resX - r, y: p.y * resY - r }, SHUTTLE_COLOR, 0.25 + 0.7 * age);
   });
+  const newest = input.trail?.[input.trail.length - 1];
+  if (newest) shuttleMarker(c, { x: newest.x * resX, y: newest.y * resY }, shuttleLabelText(snapshot?.shuttle?.speedKmh), 0, LIVE_END, resX);
   return { width: resX, height: resY, items: c.items };
 }
 

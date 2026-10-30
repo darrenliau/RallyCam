@@ -1,9 +1,10 @@
-import { StyleSheet, View } from 'react-native';
+import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import type { CourtMap } from '../analysis/court';
 import type { Track } from '../analysis/players';
 import type { ShuttleStats } from '../analysis/shuttle';
 import type { MatchState } from '../engine/types';
+import { SHUTTLE_COLOR, shuttleLabelText } from '../export/ass';
 import { PlayerOverlay, type TagInfo } from './PlayerOverlay';
 import { ScoreBoard } from './ScoreBoard';
 import { CourtMapCard, DistanceCard, ShuttleCards } from './StatCards';
@@ -40,10 +41,23 @@ export function MatchOverlay({
         <Svg width={width} height={height} style={StyleSheet.absoluteFill} pointerEvents="none">
           {trail.map((p, i) => {
             const age = (i + 1) / trail.length;
-            return <Circle key={i} cx={p.x} cy={p.y} r={2 + 4 * age} fill="#FFD166" opacity={0.25 + 0.7 * age} />;
+            return <Circle key={i} cx={p.x} cy={p.y} r={2 + 4 * age} fill={SHUTTLE_COLOR} opacity={0.25 + 0.7 * age} />;
           })}
+          <Circle cx={trail[trail.length - 1].x} cy={trail[trail.length - 1].y} r={11} fill="none" stroke={SHUTTLE_COLOR} strokeWidth={2.5} />
         </Svg>
       )}
+      {trail && trail.length > 0 && (() => {
+        const p = trail[trail.length - 1];
+        const text = shuttleLabelText(shuttle?.speedKmh);
+        const w = text.length * 6.6 + 18;
+        const x = Math.min(Math.max(p.x - w / 2, 4), width - w - 4);
+        const y = p.y - 11 - 22 - 6 >= 4 ? p.y - 11 - 22 - 6 : p.y + 11 + 6;
+        return (
+          <View pointerEvents="none" style={{ position: 'absolute', left: x, top: y, width: w, height: 22, borderRadius: 6, backgroundColor: 'rgba(11,18,16,0.85)', borderLeftWidth: 4, borderLeftColor: SHUTTLE_COLOR, alignItems: 'center', justifyContent: 'center' }}>
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '700' }}>{text}</Text>
+          </View>
+        );
+      })()}
       <View style={{ position: 'absolute', top: inset.t, left: (width - boardW) / 2, width: boardW }} pointerEvents="none">
         <ScoreBoard state={state} />
       </View>

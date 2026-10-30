@@ -208,6 +208,32 @@ describe('buildLiveScene (drawn into the video while recording)', () => {
     expect(scene.items.some((i) => i.k === 's' && i.l === 20)).toBe(false); // no player rings
     expect(JSON.parse(JSON.stringify(scene))).toEqual(scene);
   });
+
+  it('puts a labelled ring on the shuttle when it is tracked', () => {
+    const trail = [{ x: 0.4, y: 0.3 }, { x: 0.45, y: 0.32 }, { x: 0.5, y: 0.35 }];
+    const scene = buildLiveScene({ config, state, snapshot, corners, frameAspect: 16 / 9, trail });
+    const texts = scene.items.flatMap((i) => (i.k === 't' ? [i.s] : []));
+    expect(texts).toContain('SHUTTLE · 150 km/h');
+    const ring = scene.items.filter((i) => i.k === 's' && i.l === 30 && i.sw);
+    expect(ring).toHaveLength(1);
+    // the ring sits on the newest point, half way across the 1920 wide picture
+    expect(960 - ring[0].x).toBeGreaterThan(5);
+    expect(960 - ring[0].x).toBeLessThan(60);
+  });
+
+  it('has no shuttle label when the shuttle is not tracked', () => {
+    const texts = buildLiveScene({ config, state, snapshot, corners, frameAspect: 16 / 9 }).items.flatMap((i) => (i.k === 't' ? [i.s] : []));
+    expect(texts.some((t) => t === 'SHUTTLE' || t.startsWith('SHUTTLE ·'))).toBe(false);
+  });
+
+  it('keeps the label inside the picture near an edge', () => {
+    const scene = buildLiveScene({ config, state, corners, frameAspect: 16 / 9, trail: [{ x: 0.999, y: 0.01 }] });
+    const plates = scene.items.filter((i) => i.k === 's' && i.l === 31);
+    expect(plates).toHaveLength(1);
+    expect(plates[0].x).toBeGreaterThan(0);
+    expect(plates[0].x).toBeLessThan(1920);
+    expect(plates[0].y).toBeGreaterThan(0);
+  });
 });
 
 describe('hiding empty shuttle cards (store builds)', () => {
@@ -228,4 +254,5 @@ describe('hiding empty shuttle cards (store builds)', () => {
     expect(texts(true, true)).toContain('SHUTTLE SPEED');
     expect(texts(true, true)).toContain('~99');
   });
+
 });
