@@ -185,3 +185,7 @@ Players usually stop for a couple of seconds once the shuttle has landed, and ke
 - **Hold:** if the shuttle is out of sight but a player is still moving, the rally is not called over, up to 4 s. This stops a shuttle the camera merely lost from ending a rally.
 - **Confidence:** a point called while the players have stopped is more sure; one called while they are still moving is less sure (and gets flagged in Review).
 - **Cut short:** after a point is called, if the shuttle shows up again within 2.5 s, within 4 m of where it was lost, and the players are not calm, the point is taken back automatically, a notice says so, and the rally carries on without needing a new serve (`isContinuation` in `rallyEnd.ts`). The debug panel shows the players' speed and a "cut short" count.
+
+## Shuttle tracker: crowded frames and learned background
+
+From the second shuttle log (`phase0/data/second-session.shuttle.csv.gz`, 12.7 minutes): 36% of frames had the maximum 12 candidates, at a steady rate in every minute, all along one horizontal strip. That is a shimmering screen or pattern, not a shuttle. The tracker (`shuttleMotion.ts`, mirrored in `ShuttleTracker.swift`) now has two more rules: a frame with 10 or more candidates cannot start a new track (an existing track keeps going), and the picture is divided into 24 px squares that learn which places keep producing candidates, and candidates there are dropped while looking for a new track. Replaying the log through the old rules gave 167 track starts; with the crowded-frame rule, 3; with both, 0.

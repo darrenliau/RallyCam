@@ -135,6 +135,58 @@ describe('MotionShuttleTracker', () => {
     expect(m.y + m.h).toBeGreaterThan(110);
   });
 
+  it('does not start a track in a crowded frame, but keeps following one already started', () => {
+    const noise = rng(21);
+    const rand = rng(11);
+    // learned background off, so only the crowd rule is tested
+    const options = { crowdedCount: 6, activityLimit: 10, hotCount: 99 };
+    // 8 specks that jump to new places every frame (a shimmering screen) make every frame crowded
+    const specks = (): Blob[] => Array.from({ length: 8 }, () => ({ x: 20 + noise() * 560, y: 20 + noise() * 300, w: 4, h: 4, value: 240 }));
+    const crowded = new MotionShuttleTracker(options);
+    let tracked = 0;
+    for (let i = 0; i < 40; i++) {
+      if (crowded.update(frame([...specks(), shuttleAt(i, 12)], rand), W, H, i / 60).track?.confirmed) tracked++;
+    }
+    expect(tracked).toBe(0);
+
+    const started = new MotionShuttleTracker(options);
+    let kept = 0;
+    for (let i = 0; i < 40; i++) {
+      const blobs = i < 12 ? [shuttleAt(i, 12)] : [...specks(), shuttleAt(i, 12)]; // the crowd arrives after the track exists
+      const r = started.update(frame(blobs, rand), W, H, i / 60);
+      if (i >= 14 && r.track?.confirmed && r.track.misses === 0) kept++;
+    }
+    expect(kept).toBeGreaterThan(10);
+  });
+
+  it('learns a flickering row of squares and stops treating it as candidates', () => {
+    const rand = rng(12);
+    const tracker = new MotionShuttleTracker();
+    const specks = (i: number): Blob[] => Array.from({ length: 5 }, (_, k) => ({ x: 60 + k * 90, y: 300, w: 5, h: 5, value: i % 2 ? 240 : 20 }));
+    let early = 0;
+    let late = 0;
+    for (let i = 0; i < 160; i++) {
+      const r = tracker.update(frame(specks(i), rand), W, H, i / 60);
+      if (i < 12) early += r.candidates.length;
+      if (i > 120) late += r.candidates.length;
+    }
+    expect(early).toBeGreaterThan(0);
+    expect(late).toBe(0);
+  });
+
+  it('still finds a shuttle that crosses the flickering row once the row has been learned', () => {
+    const rand = rng(13);
+    const tracker = new MotionShuttleTracker();
+    const specks = (i: number): Blob[] => Array.from({ length: 5 }, (_, k) => ({ x: 60 + k * 90, y: 300, w: 5, h: 5, value: i % 2 ? 240 : 20 }));
+    for (let i = 0; i < 140; i++) tracker.update(frame(specks(i), rand), W, H, i / 60);
+    let tracked = 0;
+    for (let i = 140; i < 180; i++) {
+      const r = tracker.update(frame([...specks(i), shuttleAt(i - 140, 12)], rand), W, H, i / 60);
+      if (r.track?.confirmed) tracked++;
+    }
+    expect(tracked).toBeGreaterThan(5);
+  });
+
   it('does not invent a track from noise alone', () => {
     const rand = rng(3);
     const tracker = new MotionShuttleTracker();

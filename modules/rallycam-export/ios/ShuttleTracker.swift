@@ -67,6 +67,12 @@ final class MotionShuttleTracker {
   private let hotFrames = 10
   private let hotCount = 4
   private let maxTrackAge = 1.2
+  // learned background and crowded frames (see crowdedCount and activity* in shuttleMotion.ts)
+  private let crowdedCount = 10
+  private let activityBin = 24.0
+  private let activityRise: Float = 0.03
+  private let activityDecay: Float = 0.01
+  private let activityLimit: Float = 0.06
 
   private var frames: [[UInt8]] = [[], [], []]   // newest, previous, the one before
   private var width = 0
@@ -77,6 +83,9 @@ final class MotionShuttleTracker {
   private var seeds: [Seed] = []
   private var recent: [[ShuttleCandidate]] = []
   private var maskHistory: [[CGRect]] = []
+  private var activity: [Float] = []
+  private var binsW = 0
+  private var binsH = 0
 
   func reset() {
     haveFrames = 0
@@ -84,6 +93,9 @@ final class MotionShuttleTracker {
     seeds = []
     recent = []
     maskHistory = []
+    activity = []
+    binsW = 0
+    binsH = 0
   }
 
   /// `plane` is the camera's luma plane. (x0, y0, w, h) is the area to watch, in pixels. `t` is the frame time in seconds.
@@ -151,8 +163,11 @@ final class MotionShuttleTracker {
       return ShuttleResult(candidates: [], track: track, activeFraction: activeFraction, shaky: true)
     }
 
-    let candidates = dropBackground(blobs(count: cellCount, diff: cellDiff, cw: cw, ch: ch, covered: covered))
-    follow(candidates, t: obsT)
+    let found = blobs(count: cellCount, diff: cellDiff, cw: cw, ch: ch, covered: covered)
+    // A track already being followed may pass over a flickering place, so the learned background only filters while looking for a new one
+    let cleaned = dropBusy(found, w: w, h: h)
+    let candidates = dropBackground(track != nil ? found : cleaned)
+    follow(candidates, t: obsT, crowded: candidates.count >= crowdedCount)
     return ShuttleResult(candidates: candidates, track: track, activeFraction: activeFraction, shaky: false)
   }
 
@@ -208,6 +223,37 @@ final class MotionShuttleTracker {
     return Array(out.prefix(maxCandidates))
   }
 
+  /// Learns which squares of the picture keep producing candidates (flicker, a screen, a patterned floor) and drops candidates there.
+  /// Only learns while there is no track, so the shuttle being followed cannot teach it that its own path is background.
+  private func dropBusy(_ found: [ShuttleCandidate], w: Int, h: Int) -> [ShuttleCandidate] {
+    let bw = Int((Double(w) / activityBin).rounded(.up))
+    let bh = Int((Double(h) / activityBin).rounded(.up))
+    if binsW != bw || binsH != bh {
+      binsW = bw
+      binsH = bh
+      activity = [Float](repeating: 0, count: bw * bh)
+    }
+    let keep = found.filter { c in
+      let bx = Int(c.x / activityBin)
+      let by = Int(c.y / activityBin)
+      var m: Float = 0
+      for j in (by - 1)...(by + 1) {
+        for i in (bx - 1)...(bx + 1) where i >= 0 && j >= 0 && i < bw && j < bh { m = max(m, activity[j * bw + i]) }
+      }
+      return m < activityLimit
+    }
+    let fading = 1 - activityDecay
+    for i in 0..<activity.count { activity[i] *= fading }
+    if track == nil {
+      for c in found where !c.inPlayer {   // players move around a lot; they are handled by the player boxes
+        let bx = min(bw - 1, max(0, Int(c.x / activityBin)))
+        let by = min(bh - 1, max(0, Int(c.y / activityBin)))
+        activity[by * bw + bx] = min(1, activity[by * bw + bx] + activityRise)
+      }
+    }
+    return keep
+  }
+
   /// Remove blobs that have been at about the same spot in several of the last few frames.
   private func dropBackground(_ found: [ShuttleCandidate]) -> [ShuttleCandidate] {
     let keep = found.filter { c in
@@ -226,7 +272,7 @@ final class MotionShuttleTracker {
     track = tr.misses > maxMisses ? nil : tr
   }
 
-  private func follow(_ cands: [ShuttleCandidate], t: Double) {
+  private func follow(_ cands: [ShuttleCandidate], t: Double, crowded: Bool) {
     if let tr = track {
       if t - tr.born > maxTrackAge { track = nil; seeds = []; return }
       let dt = max(1e-3, t - tr.t)
@@ -249,6 +295,7 @@ final class MotionShuttleTracker {
     }
 
     // no track yet: grow short chains of blobs that move the same way. Blobs on a player never start one.
+    if crowded { seeds = []; return }   // a crowded frame (a shimmering screen) never starts a track
     let free = cands.filter { !$0.inPlayer }
     var next: [Seed] = []
     var used = Set<Int>()

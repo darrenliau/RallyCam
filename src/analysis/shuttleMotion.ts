@@ -58,6 +58,15 @@ export interface MotionOptions {
   hotCount: number;
   /** No flight lasts this long, so a track older than this is dropped and the search starts again. */
   maxTrackAge: number;
+  /** A frame with this many candidates or more is crowded (a flickering screen, a patterned floor): no new track may start from it. */
+  crowdedCount: number;
+  /** The picture is divided into squares of this many pixels to learn which places keep flickering. */
+  activityBin: number;
+  /** How much a candidate in a square raises that square's activity, and how fast it fades (per frame). */
+  activityRise: number;
+  activityDecay: number;
+  /** A candidate in or next to a square this active is background. A shuttle crosses a square in a frame or two and never reaches this. */
+  activityLimit: number;
 }
 
 export const DEFAULT_MOTION: MotionOptions = {
@@ -76,6 +85,11 @@ export const DEFAULT_MOTION: MotionOptions = {
   hotFrames: 10,
   hotCount: 4,
   maxTrackAge: 1.2,
+  crowdedCount: 10,
+  activityBin: 24,
+  activityRise: 0.03,
+  activityDecay: 0.01,
+  activityLimit: 0.06,
 };
 
 export interface Track {
@@ -111,6 +125,8 @@ export class MotionShuttleTracker {
   private seeds: Seed[] = [];
   private recent: Candidate[][] = [];
   private maskHistory: Box[][] = [];
+  private activity = new Float32Array(0);
+  private bins = { w: 0, h: 0 };
   private o: MotionOptions;
 
   constructor(options: Partial<MotionOptions> = {}) {
@@ -123,6 +139,7 @@ export class MotionShuttleTracker {
     this.seeds = [];
     this.recent = [];
     this.maskHistory = [];
+    this.activity = new Float32Array(0);
   }
 
   /** `luma` is the brightness of the area to watch, one byte per pixel, `w` x `h`. `t` is its time in seconds. */
@@ -174,8 +191,11 @@ export class MotionShuttleTracker {
       return { candidates: [], track: this.track, activeFraction, shaky: true };
     }
 
-    const candidates = this.dropBackground(this.blobs(cellCount, cellDiff, cw, ch, covered));
-    this.follow(candidates, obsT);
+    const found = this.blobs(cellCount, cellDiff, cw, ch, covered);
+    // A track already being followed may pass over a flickering place, so the learned background only filters while looking for a new one
+    const cleaned = this.dropBusy(found, w, h);
+    const candidates = this.dropBackground(this.track ? found : cleaned);
+    this.follow(candidates, obsT, candidates.length >= o.crowdedCount);
     return { candidates, track: this.track, activeFraction, shaky: false };
   }
 
@@ -227,6 +247,41 @@ export class MotionShuttleTracker {
     return out.slice(0, o.maxCandidates);
   }
 
+  /**
+   * Learns which squares of the picture keep producing candidates (flicker, a screen, a patterned floor) and drops candidates there.
+   * Only learns while there is no track, so the shuttle being followed cannot teach it that its own path is background.
+   */
+  private dropBusy(found: Candidate[], w: number, h: number): Candidate[] {
+    const o = this.o;
+    const bw = Math.ceil(w / o.activityBin);
+    const bh = Math.ceil(h / o.activityBin);
+    if (this.bins.w !== bw || this.bins.h !== bh) {
+      this.bins = { w: bw, h: bh };
+      this.activity = new Float32Array(bw * bh);
+    }
+    const act = this.activity;
+    const keep = found.filter((c) => {
+      const bx = Math.floor(c.x / o.activityBin);
+      const by = Math.floor(c.y / o.activityBin);
+      let m = 0;
+      for (let j = by - 1; j <= by + 1; j++) for (let i = bx - 1; i <= bx + 1; i++) {
+        if (i >= 0 && j >= 0 && i < bw && j < bh) m = Math.max(m, act[j * bw + i]);
+      }
+      return m < o.activityLimit;
+    });
+    const keepFading = 1 - o.activityDecay;
+    for (let i = 0; i < act.length; i++) act[i] *= keepFading;
+    if (!this.track) {
+      for (const c of found) {
+        if (c.inPlayer) continue; // players move around a lot; they are handled by the player boxes
+        const bx = Math.min(bw - 1, Math.max(0, Math.floor(c.x / o.activityBin)));
+        const by = Math.min(bh - 1, Math.max(0, Math.floor(c.y / o.activityBin)));
+        act[by * bw + bx] = Math.min(1, act[by * bw + bx] + o.activityRise);
+      }
+    }
+    return keep;
+  }
+
   /** Remove blobs that have been at about the same spot in several of the last few frames. */
   private dropBackground(found: Candidate[]): Candidate[] {
     const o = this.o;
@@ -246,7 +301,7 @@ export class MotionShuttleTracker {
     if (this.track.misses > this.o.maxMisses) this.track = undefined;
   }
 
-  private follow(cands: Candidate[], t: number) {
+  private follow(cands: Candidate[], t: number, crowded: boolean) {
     const o = this.o;
     if (this.track) {
       const tr = this.track;
@@ -270,7 +325,8 @@ export class MotionShuttleTracker {
       return;
     }
 
-    // no track yet: grow short chains of blobs that move the same way. Blobs on a player never start one.
+    // no track yet: grow short chains of blobs that move the same way. Blobs on a player never start one, and neither does a crowded frame.
+    if (crowded) { this.seeds = []; return; }
     const free = cands.filter((c) => !c.inPlayer);
     const next: Seed[] = [];
     const used = new Set<number>();
