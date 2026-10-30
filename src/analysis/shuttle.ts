@@ -7,6 +7,17 @@ export interface ShuttleStats {
   lastShot?: { type: string; player: string; number: number };
 }
 
+/**
+ * Where the shuttle is on the court map. `flying` is in play (position is rough, as the shuttle is above the floor).
+ * `landed` is where it was last seen coming down, with whether that is inside the lines.
+ */
+export interface ShuttleOnMap {
+  u: number;
+  v: number;
+  phase: 'flying' | 'landed';
+  inBounds?: boolean;
+}
+
 const SHOT_TYPES: [string, number][] = [['CLEAR', 95], ['DROP', 55], ['SMASH', 215], ['NET SHOT', 30], ['DRIVE', 125], ['LIFT', 80]];
 
 /** Made-up shuttle numbers for trying the screen without a tracker. Debug builds only. */

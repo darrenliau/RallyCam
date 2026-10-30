@@ -71,4 +71,59 @@ describe('ShuttleEstimator', () => {
     expect(trail.length).toBeLessThan(25);
     expect(trail[trail.length - 1].x).toBeCloseTo(0.9, 5);
   });
+
+  describe('on the court map', () => {
+    /** Shuttle falling straight down the picture at `x`, from y0 to y1. */
+    const fall = (est: ShuttleEstimator, x: number, y0: number, y1: number, startT: number, secs: number) => {
+      const n = Math.round(secs * 60);
+      for (let i = 0; i <= n; i++) est.push({ t: startT + i / 60, x, y: y0 + ((y1 - y0) * i) / n });
+      return startT + secs;
+    };
+
+    it('is flying (in play) while it is being tracked', () => {
+      const est = new ShuttleEstimator(identity);
+      const end = fly(est, 0.2, 0.8, 0, 0.5);
+      expect(est.onMap(end + 0.05, false)).toMatchObject({ phase: 'flying' });
+    });
+
+    it('shows where it came down, inside the lines, when it is lost while going down', () => {
+      const est = new ShuttleEstimator(identity);
+      fly(est, 0.3, 0.5, 0, 0.4, 0.5);
+      const end = fall(est, 0.5, 0.5, 0.9, 0.4, 0.3);
+      const m = est.onMap(end + 0.6, false)!;
+      expect(m.phase).toBe('landed');
+      expect(m.u).toBeCloseTo(0.5, 2);
+      expect(m.v).toBeCloseTo(0.9, 2);
+      expect(m.inBounds).toBe(true);
+    });
+
+    it('calls a landing beyond the baseline out', () => {
+      const est = new ShuttleEstimator(identity);
+      fly(est, 0.3, 0.5, 0, 0.4, 0.5);
+      const end = fall(est, 0.5, 0.8, 1.06, 0.4, 0.3);
+      expect(est.onMap(end + 0.6, false)).toMatchObject({ phase: 'landed', inBounds: false });
+    });
+
+    it('stops showing the landing after a few seconds', () => {
+      const est = new ShuttleEstimator(identity);
+      fly(est, 0.3, 0.5, 0, 0.4, 0.5);
+      const end = fall(est, 0.5, 0.5, 0.9, 0.4, 0.3);
+      expect(est.onMap(end + 5, false)).toBeNull();
+    });
+
+    it('shows nothing for a shuttle lost while going up (behind a player, out of the picture)', () => {
+      const est = new ShuttleEstimator(identity);
+      const n = 24;
+      for (let i = 0; i <= n; i++) est.push({ t: i / 60, x: 0.4 + i * 0.005, y: 0.6 - (i * 0.2) / n });
+      expect(est.onMap(n / 60 + 0.6, false)).toBeNull();
+    });
+
+    it('shows nothing before any shuttle has been seen, and after a new rally starts', () => {
+      const est = new ShuttleEstimator(identity);
+      expect(est.onMap(1, false)).toBeNull();
+      fly(est, 0.2, 0.8, 0, 0.5);
+      est.newRally();
+      expect(est.onMap(0.6, false)).toBeNull();
+    });
+  });
 });

@@ -1,8 +1,13 @@
 import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle, Line, Rect } from 'react-native-svg';
 import type { Track } from '../analysis/players';
-import type { ShuttleStats } from '../analysis/shuttle';
+import type { ShuttleOnMap, ShuttleStats } from '../analysis/shuttle';
+import { SHUTTLE_COLOR } from '../export/ass';
 import type { TagInfo } from './PlayerOverlay';
+
+/** Where a landing is marked on the court map: green inside the lines, red outside. */
+export const IN_COLOR = '#4ADE80';
+export const OUT_COLOR = '#FF6B6B';
 
 export function DistanceCard({ rows }: { rows: { name: string; color: string; metres: number | null }[] }) {
   return (
@@ -20,7 +25,7 @@ export function DistanceCard({ rows }: { rows: { name: string; color: string; me
 }
 
 /** Top-down court with one dot per tracked player. Far end of the court is at the top. */
-export function CourtMapCard({ tracks, tagFor }: { tracks: Track[]; tagFor: (id: number) => TagInfo }) {
+export function CourtMapCard({ tracks, tagFor, shuttle }: { tracks: Track[]; tagFor: (id: number) => TagInfo; shuttle?: ShuttleOnMap | null }) {
   return (
     <View style={[s.card, { width: 104 }]}>
       <Text style={s.label}>Court map</Text>
@@ -32,6 +37,15 @@ export function CourtMapCard({ tracks, tagFor }: { tracks: Track[]; tagFor: (id:
         {tracks.map((t) => (
           <Circle key={t.id} cx={6 + t.u * 68} cy={4 + t.v * 100} r={4} fill={tagFor(t.id).color} stroke="#0B1210" />
         ))}
+        {shuttle && shuttle.phase === 'flying' && (
+          <Circle cx={6 + shuttle.u * 68} cy={4 + shuttle.v * 100} r={2.6} fill={SHUTTLE_COLOR} stroke="#0B1210" />
+        )}
+        {shuttle && shuttle.phase === 'landed' && (
+          <>
+            <Circle cx={6 + shuttle.u * 68} cy={4 + shuttle.v * 100} r={4.5} fill="none" stroke={shuttle.inBounds ? IN_COLOR : OUT_COLOR} strokeWidth={1.6} />
+            <Circle cx={6 + shuttle.u * 68} cy={4 + shuttle.v * 100} r={1.6} fill={shuttle.inBounds ? IN_COLOR : OUT_COLOR} />
+          </>
+        )}
       </Svg>
     </View>
   );

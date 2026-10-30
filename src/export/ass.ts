@@ -1,5 +1,6 @@
 import { courtMap, type CourtMap } from '../analysis/court';
 import { cornersInBox, SNAPSHOT_MAX_AGE_MS, stateAt, type OverlayData, type OverlaySnapshot } from '../analysis/overlay';
+import type { ShuttleOnMap } from '../analysis/shuttle';
 import { COURT_LINES } from '../analysis/court';
 import { currentGame, gamesWon, serverName } from '../engine/scoring';
 import type { MatchConfig, MatchState, Rally } from '../engine/types';
@@ -373,6 +374,23 @@ function shuttleMarker(c: Ctx, p: Pos, text: string, a: number, b: number, canva
 /** Longer than any game: items of a live scene stay on screen until the next one replaces them. */
 const LIVE_END = 1e9;
 
+/** Where the shuttle is on the court map, drawn in the court map card. `flying` is a dot, `landed` a ring that is green inside the lines and red outside. */
+function shuttleOnMap(c: Ctx, sm: ShuttleOnMap, a: number, b: number) {
+  const k = c.k;
+  const cx = (12 + 8 + 6 * (88 / 80) + sm.u * 68 * (88 / 80)) * k;
+  const cy = (10 + 22 + (4 + sm.v * 100) * (119 / 108)) * k;
+  if (sm.phase === 'flying') {
+    const r = 3 * k;
+    shape(c, 13, a, b, ellipse(r, r), { x: cx - r, y: cy - r }, SHUTTLE_COLOR, 1);
+    return;
+  }
+  const color = sm.inBounds ? '#4ADE80' : '#FF6B6B';
+  const r = 5 * k;
+  shape(c, 13, a, b, ellipse(r, r), { x: cx - r, y: cy - r }, color, 0, { stroke: { width: 1.8 * k, color } });
+  const d = 1.8 * k;
+  shape(c, 13, a, b, ellipse(d, d), { x: cx - d, y: cy - d }, color, 1);
+}
+
 export interface LiveInput {
   config: MatchConfig;
   /** The game as it stands now. */
@@ -383,6 +401,8 @@ export interface LiveInput {
   corners: OverlayData['corners'];
   frameAspect: number;
   hideEmptyShuttle?: boolean;
+  /** Where the shuttle is on the court map right now. */
+  shuttleMap?: ShuttleOnMap | null;
   /** The shuttle's last positions, oldest first, as fractions of the video frame. */
   trail?: { x: number; y: number }[];
 }
@@ -411,6 +431,7 @@ export function buildLiveScene(input: LiveInput): Scene {
     mapDots(c, snapshot, colorOf, 0, LIVE_END);
     players(c, { start: 0, end: LIVE_END, snap: snapshot }, map, names, colorOf);
   }
+  if (input.shuttleMap) shuttleOnMap(c, input.shuttleMap, 0, LIVE_END);
   // The shuttle's recent path, newest dot biggest
   (input.trail ?? []).forEach((p, i, all) => {
     const age = (i + 1) / all.length; // 1 for the newest

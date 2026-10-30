@@ -1,6 +1,6 @@
 import { COURT_L, COURT_W } from './court';
-import type { ShuttleStats } from './shuttle';
-import type { FloorPoint, RallyTrace } from './rallyEnd';
+import type { ShuttleOnMap, ShuttleStats } from './shuttle';
+import { landingCall, type FloorPoint, type RallyTrace } from './rallyEnd';
 
 /** A confirmed shuttle position from the camera. x and y are fractions of the frame, t is in seconds. */
 export interface ShuttleSample { t: number; x: number; y: number }
@@ -9,6 +9,11 @@ export interface ShuttleSample { t: number; x: number; y: number }
 const MAX_SPEED_MS = 150;
 /** After this long without a sample the shuttle is considered gone. */
 const GONE_AFTER_S = 1.2;
+/** The shuttle was seen this recently, so it is still in the air. */
+const FLYING_S = 0.25;
+/** A shuttle that came down and was lost shows as landed for this long. */
+const LANDED_S = 3;
+
 /** Two hits are never closer than this. */
 const MIN_HIT_GAP_S = 0.25;
 
@@ -33,6 +38,7 @@ export class ShuttleEstimator {
   private recent: ShuttleSample[] = [];
   private hit: FloorPoint | null = null;
   private first: FloorPoint | null = null;
+  private lastVel: { x: number; y: number } | null = null;
 
   /** `toFloor` maps a frame position to court coordinates (0..1 across and along the court). */
   constructor(private toFloor: (x: number, y: number) => { u: number; v: number }) {}
@@ -47,6 +53,7 @@ export class ShuttleEstimator {
     this.seen = false;
     this.hit = null;
     this.first = null;
+    this.lastVel = null;
   }
 
   push(s: ShuttleSample) {
@@ -94,6 +101,7 @@ export class ShuttleEstimator {
       }
     }
     this.prevVel = vel;
+    this.lastVel = vel;
     this.last = { ...s, u, v };
   }
 
@@ -114,6 +122,22 @@ export class ShuttleEstimator {
     if (!this.last || now - this.last.t > GONE_AFTER_S) return null;
     const kmh = this.lastShotKmh > 0 ? this.lastShotKmh : this.peakKmh;
     return { speedKmh: Math.round(kmh), shots: this.shots };
+  }
+
+  /**
+   * Where to draw the shuttle on the court map. While it is being tracked it is `flying` (in play). When it stops being
+   * seen while moving down the picture, it is shown as `landed` at that spot for a few seconds, with an in or out call.
+   * A shuttle lost while going up or sideways (behind a player, out of the picture) shows nothing.
+   */
+  onMap(now: number, singles: boolean): ShuttleOnMap | null {
+    const l = this.last;
+    if (!l) return null;
+    const age = now - l.t;
+    if (age <= FLYING_S) return { u: l.u, v: l.v, phase: 'flying' };
+    if (age <= LANDED_S && this.shots >= 1 && this.lastVel && this.lastVel.y > 0) {
+      return { u: l.u, v: l.v, phase: 'landed', inBounds: landingCall(l, singles).inBounds };
+    }
+    return null;
   }
 
   /** The last fraction of a second of the path, oldest first, in frame fractions. */

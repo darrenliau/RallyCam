@@ -221,6 +221,23 @@ describe('buildLiveScene (drawn into the video while recording)', () => {
     expect(960 - ring[0].x).toBeLessThan(60);
   });
 
+  it('draws the shuttle on the court map: a dot while flying, a green or red ring where it landed', () => {
+    const base = { config, state, snapshot, corners, frameAspect: 16 / 9 };
+    const layer13 = (shuttleMap?: Parameters<typeof buildLiveScene>[0]['shuttleMap']) => buildLiveScene({ ...base, shuttleMap }).items.filter((i) => i.k === 's' && i.l === 13);
+    expect(layer13()).toHaveLength(0);
+    const flying = layer13({ u: 0.5, v: 0.5, phase: 'flying' });
+    expect(flying).toHaveLength(1);
+    expect(flying[0].c).toBe('#FFD166');
+    const inRing = layer13({ u: 0.5, v: 0.2, phase: 'landed', inBounds: true });
+    const outRing = layer13({ u: 0.5, v: 0.2, phase: 'landed', inBounds: false });
+    expect(inRing).toHaveLength(2);
+    expect(inRing[0].c).toBe('#4ADE80');
+    expect(outRing[0].c).toBe('#FF6B6B');
+    // further down the court map is further down the picture
+    const near = layer13({ u: 0.5, v: 0.9, phase: 'flying' })[0];
+    expect(near.y).toBeGreaterThan(flying[0].y);
+  });
+
   it('has no shuttle label when the shuttle is not tracked', () => {
     const texts = buildLiveScene({ config, state, snapshot, corners, frameAspect: 16 / 9 }).items.flatMap((i) => (i.k === 't' ? [i.s] : []));
     expect(texts.some((t) => t === 'SHUTTLE' || t.startsWith('SHUTTLE ·'))).toBe(false);

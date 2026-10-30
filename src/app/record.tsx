@@ -11,7 +11,7 @@ import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
 import { cornersToFrame, type OverlaySnapshot } from '../analysis/overlay';
 import { frameToScreen, roiFromCorners, shuttleRoiFromCorners } from '../analysis/preprocess';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
-import { SimulatedShuttle, type ShuttleStats } from '../analysis/shuttle';
+import { SimulatedShuttle, type ShuttleOnMap, type ShuttleStats } from '../analysis/shuttle';
 import { ShuttleEstimator } from '../analysis/shuttleStats';
 import { DetectorPlayerTracker } from '../analysis/tracker';
 import { CourtAligner } from '../components/CourtAligner';
@@ -299,6 +299,10 @@ export default function Record() {
   const trailFrame = useRef<{ x: number; y: number }[]>([]);
   const [trail, setTrail] = useState<{ x: number; y: number }[]>([]);
   const [shuttleDiag, setShuttleDiag] = useState('');
+  // The shuttle on the court map, and where it last came down (kept on the map for a few seconds after the rally resets)
+  const [shuttleMap, setShuttleMap] = useState<ShuttleOnMap | null>(null);
+  const shuttleMapRef = useRef<ShuttleOnMap | null>(null);
+  const landing = useRef<{ at: number; mark: ShuttleOnMap } | null>(null);
   // A guess at who won the rally, from where the shuttle was last hit and last seen. The player confirms it.
   const [suggestion, setSuggestion] = useState<Verdict | null>(null);
   const judged = useRef(false);
@@ -336,6 +340,7 @@ export default function Record() {
         frameAspect: FRAME_ASPECT,
         hideEmptyShuttle: HIDE_EMPTY_SHUTTLE,
         trail: shuttleOn ? trailFrame.current : undefined,
+        shuttleMap: shuttleOn ? shuttleMapRef.current : undefined,
       }));
     };
     push();
@@ -362,6 +367,12 @@ export default function Record() {
     const id = setInterval(() => {
       const now = lastShuttleT.current;
       setShuttle(estimator.stats(now));
+      let onMap = estimator.onMap(now, judgeCtx.current.singles);
+      if (onMap?.phase === 'landed') landing.current = { at: Date.now(), mark: onMap };
+      else if (onMap) landing.current = null;
+      else if (landing.current && Date.now() - landing.current.at < 3000) onMap = landing.current.mark;
+      shuttleMapRef.current = onMap;
+      setShuttleMap(onMap);
       const ctx = judgeCtx.current;
       if (ctx.recording && !ctx.over && !judged.current) {
         const trace = estimator.trace();
@@ -393,7 +404,7 @@ export default function Record() {
       const t = tally.current;
       setShuttleDiag(`score guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve)\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
-    return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; };
+    return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shuttleOn, estimator]);
 
@@ -550,6 +561,7 @@ export default function Record() {
           scoreOnly={aligning}
           hideEmptyShuttle={HIDE_EMPTY_SHUTTLE}
           trail={shuttleOn ? trail : undefined}
+          shuttleMap={shuttleOn ? shuttleMap : undefined}
           mapTop={T + 40}
         />
       )}

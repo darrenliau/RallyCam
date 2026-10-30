@@ -54,12 +54,7 @@ export function judgeRally(trace: RallyTrace, now: number, singles: boolean): Ve
 
   const hitter = sideOf(lastHit.v);
   const lands = sideOf(lastSeen.v);
-  const side = singles ? SINGLES_SIDE_M : 0;
-  const xm = lastSeen.u * COURT_W;
-  const ym = lastSeen.v * COURT_L;
-  // distance outside (positive) or inside (negative) the nearest line, in metres
-  const outside = Math.max(side - xm, xm - (COURT_W - side), -ym, ym - COURT_L);
-  const inBounds = outside < 0;
+  const { inBounds, outside } = landingCall(lastSeen, singles);
   const nearLine = Math.abs(outside) < UNSURE_M;
   const crossed = lands !== hitter;
   const nearNet = Math.abs(lastSeen.v - 0.5) * COURT_L < UNSURE_M;
@@ -77,6 +72,15 @@ export function judgeRally(trace: RallyTrace, now: number, singles: boolean): Ve
 const SERVER_REACH_M = 3.5;
 /** Slack on the left/right halves, as a fraction of the court width. */
 const HALF_SLACK = 0.12;
+
+/** Whether a floor position is inside the court, and how far outside (positive) or inside (negative) the nearest line it is, in metres. */
+export function landingCall(p: { u: number; v: number }, singles: boolean): { inBounds: boolean; outside: number } {
+  const side = singles ? SINGLES_SIDE_M : 0;
+  const xm = p.u * COURT_W;
+  const ym = p.v * COURT_L;
+  const outside = Math.max(side - xm, xm - (COURT_W - side), -ym, ym - COURT_L);
+  return { inBounds: outside < 0, outside };
+}
 
 /** True when the shuttle has been gone long enough that the rally is over (or was never one). */
 export function isRallyOver(trace: RallyTrace, now: number): boolean {

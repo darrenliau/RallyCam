@@ -2,7 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 import Svg, { Circle } from 'react-native-svg';
 import type { CourtMap } from '../analysis/court';
 import type { Track } from '../analysis/players';
-import type { ShuttleStats } from '../analysis/shuttle';
+import type { ShuttleOnMap, ShuttleStats } from '../analysis/shuttle';
 import type { MatchState } from '../engine/types';
 import { SHUTTLE_COLOR, shuttleLabelText } from '../export/ass';
 import { PlayerOverlay, type TagInfo } from './PlayerOverlay';
@@ -17,7 +17,7 @@ export interface Insets { l: number; r: number; t: number; b: number }
  */
 export function MatchOverlay({
   width, height, inset, map, tracks, tagFor, selected = null, onTagPress, state, distanceRows, shuttle,
-  scoreOnly = false, mapTop = 8, hideEmptyShuttle = false, trail,
+  scoreOnly = false, mapTop = 8, hideEmptyShuttle = false, trail, shuttleMap,
 }: {
   width: number; height: number; inset: Insets; map: CourtMap; tracks: Track[]; tagFor: (id: number) => TagInfo;
   selected?: number | null; onTagPress?: (id: number) => void; state: MatchState;
@@ -30,6 +30,8 @@ export function MatchOverlay({
   hideEmptyShuttle?: boolean;
   /** The shuttle's recent path in canvas pixels, oldest first. */
   trail?: { x: number; y: number }[];
+  /** The shuttle on the court map. */
+  shuttleMap?: ShuttleOnMap | null;
 }) {
   const boardW = Math.min(360, width - 2 * (inset.l + 170));
   return (
@@ -69,7 +71,7 @@ export function MatchOverlay({
             </View>
           )}
           <View style={{ position: 'absolute', left: inset.l, top: mapTop }} pointerEvents="none">
-            <CourtMapCard tracks={tracks} tagFor={tagFor} />
+            <CourtMapCard tracks={tracks} tagFor={tagFor} shuttle={shuttleMap} />
           </View>
           <View style={{ position: 'absolute', left: inset.l, bottom: inset.b }} pointerEvents="none">
             <DistanceCard rows={distanceRows} />

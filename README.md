@@ -170,3 +170,7 @@ Serve check: before a rally is judged, `serveProblem` (in `rallyEnd.ts`) checks 
 ## Camera lens
 
 On iPhone, while lining up the court (before recording starts) the top-left row shows the lenses the phone has: 0.5× (ultra-wide), 1× (wide) and Tele where there is one. Tapping one switches the camera without leaving the screen, then asks you to drag the court corners again because the picture changes. The choice is remembered (Settings table, `lens`) and used next time; the default "auto" is the widest lens that can keep the frame rate. The lens cannot be changed once recording has started. Native side: `CaptureController.switchLens` and `availableLenses`.
+
+## Shuttle on the court map
+
+With shuttle tracking on, the court map card shows the shuttle: a yellow dot while it is being tracked ("in play"; the position is rough because the shuttle is above the floor), and a ring where it came down once it is lost while moving down the picture. The ring is green inside the lines and red outside (singles lines in singles) and stays about 3 s, even after the point has been given. A shuttle lost while going up or sideways shows nothing, since it was hidden or left the picture rather than landing. It is drawn in the recorded video too. Logic: `ShuttleEstimator.onMap` in `src/analysis/shuttleStats.ts`, in/out in `landingCall` in `rallyEnd.ts`. A later step could use "landed" to end rallies faster than the 1.6 s wait.
