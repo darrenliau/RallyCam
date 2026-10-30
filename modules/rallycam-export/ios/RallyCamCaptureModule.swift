@@ -51,13 +51,30 @@ public class RallyCamCaptureModule: Module {
     }
 
     // Starts the camera. Resolves with the frame rate and size it really settled on.
-    AsyncFunction("startSession") { (targetFps: Int, promise: Promise) in
-      CaptureController.shared.start(targetFps: targetFps) { result in
+    AsyncFunction("startSession") { (targetFps: Int, lens: String, promise: Promise) in
+      CaptureController.shared.start(targetFps: targetFps, lens: lens) { result in
         switch result {
         case .success(let info):
-          promise.resolve(["fps": info.fps, "width": info.width, "height": info.height])
+          promise.resolve(["fps": info.fps, "width": info.width, "height": info.height, "lens": info.lens])
         case .failure(let error):
           promise.reject("ERR_CAPTURE", error.localizedDescription)
+        }
+      }
+    }
+
+    // The lenses this phone has: "ultra-wide", "wide", "tele".
+    Function("getLenses") { () -> [String] in
+      CaptureController.shared.availableLenses()
+    }
+
+    // Changes lens while the camera is running (not while recording). Resolves with the frame rate and lens now in use.
+    AsyncFunction("setLens") { (lens: String, targetFps: Int, promise: Promise) in
+      CaptureController.shared.switchLens(lens, targetFps: targetFps) { result in
+        switch result {
+        case .success(let info):
+          promise.resolve(["fps": info.fps, "width": info.width, "height": info.height, "lens": info.lens])
+        case .failure(let error):
+          promise.reject("ERR_LENS", error.localizedDescription)
         }
       }
     }

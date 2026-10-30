@@ -7,6 +7,7 @@ struct CaptureInfo {
   let fps: Int
   let width: Int
   let height: Int
+  let lens: String
 }
 
 enum CaptureError: LocalizedError {
@@ -123,6 +124,7 @@ final class CaptureController: NSObject {
   private var audioPeak: Float = 0      // loudest sample since the last status read, 0 to 1
   private var deviceName = ""
   private var activeDevice: AVCaptureDevice?
+  private var cameraInput: AVCaptureDeviceInput?
 
   private func bump(_ change: () -> Void) {
     statsLock.lock()
@@ -156,10 +158,42 @@ final class CaptureController: NSObject {
 
   // MARK: session
 
-  func start(targetFps: Int, completion: @escaping (Result<CaptureInfo, Error>) -> Void) {
+  /// Lenses this phone has, by the names JavaScript uses: "ultra-wide" (0.5x), "wide" (1x) and "tele".
+  func availableLenses() -> [String] {
+    CaptureController.lensTypes.compactMap { type, name in
+      AVCaptureDevice.default(type, for: .video, position: .back) != nil ? name : nil
+    }
+  }
+
+  private static let lensTypes: [(AVCaptureDevice.DeviceType, String)] = [
+    (.builtInUltraWideCamera, "ultra-wide"), (.builtInWideAngleCamera, "wide"), (.builtInTelephotoCamera, "tele"),
+  ]
+
+  /// Switches to another lens while the camera is running. Not while recording: the picture, and so the court, would jump.
+  func switchLens(_ lens: String, targetFps: Int, completion: @escaping (Result<CaptureInfo, Error>) -> Void) {
+    sessionQueue.async {
+      guard self.state != .recording && self.state != .stopping else {
+        completion(.failure(CaptureError.setup("The lens cannot be changed while recording")))
+        return
+      }
+      do {
+        let fps = try self.configure(targetFps: targetFps, lens: lens)
+        completion(.success(CaptureInfo(fps: fps, width: self.frameWidth, height: self.frameHeight, lens: self.currentLens())))
+      } catch {
+        completion(.failure(error))
+      }
+    }
+  }
+
+  private func currentLens() -> String {
+    statsLock.lock(); defer { statsLock.unlock() }
+    return lens
+  }
+
+  func start(targetFps: Int, lens: String = "auto", completion: @escaping (Result<CaptureInfo, Error>) -> Void) {
     sessionQueue.async {
       do {
-        let info = try self.configureAndRun(targetFps: targetFps)
+        let info = try self.configureAndRun(targetFps: targetFps, lens: lens)
         completion(.success(info))
       } catch {
         completion(.failure(error))
@@ -167,15 +201,15 @@ final class CaptureController: NSObject {
     }
   }
 
-  private func configureAndRun(targetFps: Int) throws -> CaptureInfo {
-    NSLog("RallyCam: starting the camera, wanted \(targetFps) fps")
-    let fps = try configure(targetFps: targetFps)
+  private func configureAndRun(targetFps: Int, lens wanted: String) throws -> CaptureInfo {
+    NSLog("RallyCam: starting the camera, wanted \(targetFps) fps, lens \(wanted)")
+    let fps = try configure(targetFps: targetFps, lens: wanted)
     frameWidth = 1920
     frameHeight = 1080
     observeSession()
     if !session.isRunning { session.startRunning() }
     NSLog("RallyCam: camera session running = \(session.isRunning), \(fps) fps, lens \(lens)")
-    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight)
+    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens)
   }
 
   private var observing = false
@@ -245,14 +279,17 @@ final class CaptureController: NSObject {
   }
 
   /// Sets up the camera, microphone and outputs. Returns the frame rate the camera will really run at.
-  private func configure(targetFps: Int) throws -> Int {
+  /// `wanted` is "auto" (the widest lens that can keep the frame rate) or one of the names from availableLenses().
+  private func configure(targetFps: Int, lens wanted: String) throws -> Int {
     guard AVCaptureDevice.authorizationStatus(for: .video) == .authorized else { throw CaptureError.notAuthorized("Camera") }
     let micAllowed = AVCaptureDevice.authorizationStatus(for: .audio) == .authorized
 
     // The ultra-wide camera (0.5x) sees more of the court from close range. The listed order is the preference: it
     // wins unless the main camera can run at a higher frame rate.
     var chosen: (device: AVCaptureDevice, format: AVCaptureDevice.Format, fps: Int, lens: String)?
-    for (type, name) in [(AVCaptureDevice.DeviceType.builtInUltraWideCamera, "ultra-wide"), (.builtInWideAngleCamera, "wide")] {
+    var candidates = wanted == "auto" ? Array(CaptureController.lensTypes.prefix(2)) : CaptureController.lensTypes.filter { $0.1 == wanted }
+    if candidates.isEmpty || AVCaptureDevice.default(candidates[0].0, for: .video, position: .back) == nil { candidates = Array(CaptureController.lensTypes.prefix(2)) }
+    for (type, name) in candidates {
       guard let device = AVCaptureDevice.default(type, for: .video, position: .back), let pick = bestFormat(of: device, targetFps: targetFps) else { continue }
       if chosen == nil || pick.fps > chosen!.fps { chosen = (device, pick.format, pick.fps, name) }
     }
@@ -261,11 +298,16 @@ final class CaptureController: NSObject {
 
     session.beginConfiguration()
     defer { session.commitConfiguration() }
-    if !configured {
+    // Swap the camera input when the lens changes; the outputs stay as they are.
+    if cameraInput?.device != device {
       session.sessionPreset = .inputPriority
       let input = try AVCaptureDeviceInput(device: device)
+      if let old = cameraInput { session.removeInput(old) }
       guard session.canAddInput(input) else { throw CaptureError.setup("cannot add the camera") }
       session.addInput(input)
+      cameraInput = input
+    }
+    if !configured {
 
       videoOutput.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange]
       videoOutput.alwaysDiscardsLateVideoFrames = true

@@ -27,7 +27,9 @@ type Events = {
 };
 
 declare class RallyCamCaptureModule extends NativeModule<Events> {
-  startSession(targetFps: number): Promise<{ fps: number; width: number; height: number }>;
+  startSession(targetFps: number, lens: string): Promise<{ fps: number; width: number; height: number; lens: string }>;
+  getLenses(): string[];
+  setLens(lens: string, targetFps: number): Promise<{ fps: number; width: number; height: number; lens: string }>;
   stopSession(): Promise<void>;
   startRecording(uri: string, outputFps: number, width: number, height: number, bitRate: number): void;
   stopRecording(): Promise<string | null>;

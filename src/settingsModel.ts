@@ -1,5 +1,12 @@
 export type VideoQuality = 'high' | 'balanced' | 'small';
 
+/** Which camera lens to film with. "auto" picks the widest one that keeps the frame rate. */
+export type Lens = 'auto' | 'ultra-wide' | 'wide' | 'tele';
+export const LENSES: Lens[] = ['auto', 'ultra-wide', 'wide', 'tele'];
+
+/** What to call a lens on screen. */
+export const LENS_LABEL: Record<string, string> = { auto: 'Auto', 'ultra-wide': '0.5×', wide: '1×', tele: 'Tele' };
+
 export interface QualityPreset {
   label: string;
   width: number;
@@ -28,14 +35,17 @@ export interface Settings {
   guideSeen: boolean;
   /** Try to follow the shuttle with the camera (experimental, iPhone only). */
   experimentalShuttle: boolean;
+  /** The lens last used, so the saved court lines still fit next time. */
+  lens: Lens;
 }
 
-export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false };
+export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, lens: 'auto' };
 
 /** Reads one stored value back into the right type, ignoring anything unexpected. */
 export function parseSetting<K extends keyof Settings>(key: K, raw: string): Settings[K] | undefined {
   if (key === 'quality') return (raw in QUALITY ? raw : undefined) as Settings[K] | undefined;
   if (key === 'guideSeen' || key === 'experimentalShuttle') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
+  if (key === 'lens') return ((LENSES as string[]).includes(raw) ? raw : undefined) as Settings[K] | undefined;
   return undefined;
 }
 

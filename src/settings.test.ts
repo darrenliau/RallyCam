@@ -19,6 +19,8 @@ describe('parseSetting', () => {
     expect(parseSetting('quality', 'small')).toBe('small');
     expect(parseSetting('guideSeen', '1')).toBe(true);
     expect(parseSetting('experimentalShuttle', '0')).toBe(false);
+    expect(parseSetting('lens', 'ultra-wide')).toBe('ultra-wide');
+    expect(parseSetting('lens', 'fisheye')).toBeUndefined();
   });
   it('ignores values it does not recognise', () => {
     expect(parseSetting('quality', 'ultra')).toBeUndefined();

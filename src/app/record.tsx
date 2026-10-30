@@ -26,7 +26,7 @@ import { EXPERIMENTS, HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
-import { FOOTAGE_PRESET, QUALITY, mbPerMinute, useSettings } from '../settings';
+import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
 import { addRally, editRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
@@ -68,6 +68,11 @@ export default function Record() {
   const [elapsed, setElapsed] = useState(0);
   const [recError, setRecError] = useState<string | null>(null);
   const [fps, setFps] = useState<number | undefined>(undefined);
+  // iPhone camera: which lens is in use and which the phone has. Changing it moves the court in the picture, so only while lining up.
+  const [lensInfo, setLensInfo] = useState<{ lens: string; available: string[] } | null>(null);
+  const [lensBusy, setLensBusy] = useState(false);
+  const [lensChanged, setLensChanged] = useState(false);
+  const lensRestored = useRef(false);
   const [ending, setEnding] = useState(false);
   const [pausedBecause, setPausedBecause] = useState<string | null>(null);
   const [pressure, setPressure] = useState('nominal');
@@ -163,6 +168,29 @@ export default function Record() {
     tracker.start(onTracks);
     return () => tracker.stop();
   }, [aligning, bridge, nNear, names.length, onTracks]);
+
+  const chooseLens = useCallback(async (name: string) => {
+    if (lensBusy || !recorder.current?.setLens || lensInfo?.lens === name) return;
+    setLensBusy(true);
+    try {
+      await recorder.current.setLens(name);
+      updateSettings({ lens: name as 'ultra-wide' | 'wide' | 'tele' });
+      setLensChanged(true);
+    } catch (e) {
+      setRecError(`The lens could not be changed: ${(e as Error).message}`);
+    } finally {
+      setLensBusy(false);
+    }
+  }, [lensBusy, lensInfo]);
+
+  // The camera starts before the saved settings are read, so switch to the lens used last time once both are ready
+  useEffect(() => {
+    if (!lensInfo || !settings.ready || lensRestored.current) return;
+    lensRestored.current = true;
+    if (settings.lens !== 'auto' && settings.lens !== lensInfo.lens && lensInfo.available.includes(settings.lens)) {
+      recorder.current?.setLens?.(settings.lens).catch(() => {});
+    }
+  }, [lensInfo, settings.ready, settings.lens]);
 
   const lockCourt = () => {
     savedCorners[sizeKey] = corners;
@@ -499,6 +527,8 @@ export default function Record() {
         onReady={onReady}
         onError={setRecError}
         onFps={setFps}
+        lens={settings.lens}
+        onLens={setLensInfo}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
         videoProfile={usesNativeCapture ? profile : undefined}
         onInterruption={(info) => setPausedBecause(info.interrupted ? info.reason : null)}
@@ -530,6 +560,15 @@ export default function Record() {
           <Pressable style={s.chip} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
             <Text style={s.chipText}>‹ Back</Text>
           </Pressable>
+        )}
+        {aligning && !recording && lensInfo && lensInfo.available.length > 1 && (
+          <View style={s.chip} accessibilityLabel="Camera lens">
+            {lensInfo.available.map((name) => (
+              <Pressable key={name} onPress={() => chooseLens(name)} disabled={lensBusy} accessibilityRole="button" accessibilityState={{ selected: lensInfo.lens === name }} accessibilityLabel={`${LENS_LABEL[name] ?? name} lens`}>
+                <Text style={[s.chipText, lensInfo.lens === name ? s.lensOn : s.lensOff]}>{LENS_LABEL[name] ?? name}</Text>
+              </Pressable>
+            ))}
+          </View>
         )}
         <View style={s.chip}>
           <View style={[s.dot, !recording && { backgroundColor: colors.muted }]} />
@@ -588,7 +627,7 @@ export default function Record() {
       {venueLoaded && aligning && (
         <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
           <Text style={s.bannerText}>
-            {staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
+            {lensChanged ? 'The lens changed, so the court looks different. Drag the four dots onto the corners again. ' : staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
             {venue ? `It is saved for ${venue.name}.` : ''}
           </Text>
           <Button label={recording ? 'Lock court' : 'Lock court and start recording'} onPress={lockCourt} />
@@ -636,6 +675,8 @@ const s = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(5,9,10,0.62)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5 },
   chip2: { color: '#fff', fontSize: 12, fontWeight: '600', backgroundColor: 'rgba(5,9,10,0.62)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden' },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF3B30' },
+  lensOn: { color: '#C8F04A' },
+  lensOff: { opacity: 0.6 },
   chipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   banner: { position: 'absolute', gap: 10, backgroundColor: 'rgba(5,9,10,0.85)', borderRadius: 16, padding: 14 },
   suggestRow: { flexDirection: 'row', gap: 8 },
