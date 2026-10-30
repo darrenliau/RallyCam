@@ -83,6 +83,9 @@ final class CaptureController: NSObject {
   private let detectLock = NSLock()
   private var detectionROI: CGRect?   // fractions of the frame, top left origin
   private var detectBusy = false
+  private var detectRound = 0
+  private var farPeople: [Found] = []     // from the zoomed far-court pass, guarded by detectLock
+  private var farPeopleAt = 0.0
   private var lastDetect = CACurrentMediaTime()
   // People seen in the latest detection (frame fractions, top left origin), so the shuttle tracker can leave them alone. Guarded by detectLock.
   private var people: [CGRect] = []
@@ -447,12 +450,62 @@ final class CaptureController: NSObject {
     detectLock.unlock()
   }
 
+  /// A person found in the picture: the box in frame fractions (top left origin), the detector's confidence, and the torso colour.
+  private struct Found {
+    var rect: CGRect
+    var score: Double
+    var look: (Double, Double, Double)?
+
+    var dictionary: [String: Double] {
+      var d: [String: Double] = ["x": Double(rect.minX), "y": Double(rect.minY), "w": Double(rect.width), "h": Double(rect.height), "score": score]
+      if let look { d["ly"] = look.0; d["lcb"] = look.1; d["lcr"] = look.2 }
+      return d
+    }
+  }
+
+  /// Looks for people in `area` (frame fractions, top left origin). The area is scaled so it is `width` pixels wide, at most `maxScale` times its real size.
+  private func findPeople(in pixelBuffer: CVPixelBuffer, area: CGRect, width: CGFloat, maxScale: CGFloat) -> [Found] {
+    let fw = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+    let fh = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+    // Core Image has its origin at the bottom left
+    let crop = CGRect(x: area.minX * fw, y: (1 - area.maxY) * fh, width: area.width * fw, height: area.height * fh)
+    let scale = min(maxScale, width / crop.width)
+    let outW = max(16, Int(crop.width * scale))
+    let outH = max(16, Int(crop.height * scale))
+    var small: CVPixelBuffer?
+    CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, [kCVPixelBufferMetalCompatibilityKey as String: true] as CFDictionary, &small)
+    guard let target = small else { return [] }
+    let image = CIImage(cvPixelBuffer: pixelBuffer)
+      .cropped(to: crop)
+      .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+      .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    ciContext.render(image, to: target)
+
+    let request = VNDetectHumanRectanglesRequest()
+    request.upperBodyOnly = false
+    do { try VNImageRequestHandler(cvPixelBuffer: target, options: [:]).perform([request]) } catch { return [] }
+    CVPixelBufferLockBaseAddress(target, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(target, .readOnly) }
+    return (request.results ?? []).map { o in
+      let b = o.boundingBox   // normalised to the crop, origin bottom left
+      let rect = CGRect(x: area.minX + b.minX * area.width, y: area.minY + (1 - b.maxY) * area.height, width: b.width * area.width, height: b.height * area.height)
+      // shirt colour, so two players can be told apart when they cross (see look in detector.ts)
+      return Found(rect: rect, score: Double(o.confidence), look: CaptureController.torsoColour(of: target, box: b))
+    }
+  }
+
+  /// The far half of the court is small in the picture and the detector misses people there when it looks at the whole court.
+  /// So the far part is looked at again in two overlapping pieces, each scaled up. People whose middle is in the far part come from
+  /// those, the rest from the whole-court pass. The far pass runs every other time, and its last result is reused in between.
+  private static let farShare: CGFloat = 0.55
+
   private func detectIfDue(_ pixelBuffer: CVPixelBuffer) {
     let now = CACurrentMediaTime()
     detectLock.lock()
     let roi = detectionROI
     let due = roi != nil && !detectBusy && now - lastDetect >= 0.066
-    if due { detectBusy = true; lastDetect = now }
+    if due { detectBusy = true; lastDetect = now; detectRound += 1 }
+    let round = detectRound
     detectLock.unlock()
     guard due, let roi else { return }
 
@@ -462,51 +515,54 @@ final class CaptureController: NSObject {
         self.detectBusy = false
         self.detectLock.unlock()
       }
-      let fw = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
-      let fh = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-      // Core Image has its origin at the bottom left
-      let crop = CGRect(x: roi.minX * fw, y: (1 - roi.maxY) * fh, width: roi.width * fw, height: roi.height * fh)
-      let scale = min(1, 960 / crop.width)
-      let outW = max(16, Int(crop.width * scale))
-      let outH = max(16, Int(crop.height * scale))
-      var small: CVPixelBuffer?
-      CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, [kCVPixelBufferMetalCompatibilityKey as String: true] as CFDictionary, &small)
-      guard let target = small else { return }
-      let image = CIImage(cvPixelBuffer: pixelBuffer)
-        .cropped(to: crop)
-        .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
-        .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
-      self.ciContext.render(image, to: target)
+      let whole = self.findPeople(in: pixelBuffer, area: roi, width: 960, maxScale: 1)
 
-      let request = VNDetectHumanRectanglesRequest()
-      request.upperBodyOnly = false
-      do { try VNImageRequestHandler(cvPixelBuffer: target, options: [:]).perform([request]) } catch { return }
-      CVPixelBufferLockBaseAddress(target, .readOnly)
-      let boxes: [[String: Double]] = (request.results ?? []).map { o in
-        let b = o.boundingBox   // normalised to the crop, origin bottom left
-        var box: [String: Double] = [
-          "x": Double(roi.minX + b.minX * roi.width),
-          "y": Double(roi.minY + (1 - b.maxY) * roi.height),
-          "w": Double(b.width * roi.width),
-          "h": Double(b.height * roi.height),
-          "score": Double(o.confidence),
-        ]
-        // shirt colour, so two players can be told apart when they cross (see look in detector.ts)
-        if let look = CaptureController.torsoColour(of: target, box: b) {
-          box["ly"] = look.0; box["lcb"] = look.1; box["lcr"] = look.2
+      // far part: from the top of the court area down a little past the boundary, so nobody standing on it is cut off
+      let boundary = roi.minY + roi.height * CaptureController.farShare
+      if round % 2 == 0 {
+        let strip = CGRect(x: roi.minX, y: roi.minY, width: roi.width, height: min(roi.height, roi.height * (CaptureController.farShare + 0.1)))
+        let overlap = roi.width * 0.08
+        let left = CGRect(x: strip.minX, y: strip.minY, width: strip.width * 0.5 + overlap, height: strip.height)
+        let right = CGRect(x: strip.minX + strip.width * 0.5 - overlap, y: strip.minY, width: strip.width * 0.5 + overlap, height: strip.height)
+        var far: [Found] = []
+        for tile in [left, right] {
+          for f in self.findPeople(in: pixelBuffer, area: tile, width: 1280, maxScale: 1.6) {
+            // the same person can turn up in both tiles where they overlap: keep the surer one
+            if let i = far.firstIndex(where: { CaptureController.overlap($0.rect, f.rect) > 0.5 }) {
+              if f.score > far[i].score { far[i] = f }
+            } else {
+              far.append(f)
+            }
+          }
         }
-        return box
+        self.detectLock.lock()
+        self.farPeople = far.filter { $0.rect.midY < boundary }
+        self.farPeopleAt = CACurrentMediaTime()
+        self.detectLock.unlock()
       }
-      CVPixelBufferUnlockBaseAddress(target, .readOnly)
+
       self.detectLock.lock()
-      self.people = (request.results ?? []).map { o in
-        let b = o.boundingBox
-        return CGRect(x: roi.minX + b.minX * roi.width, y: roi.minY + (1 - b.maxY) * roi.height, width: b.width * roi.width, height: b.height * roi.height)
-      }
+      let farFresh = CACurrentMediaTime() - self.farPeopleAt < 0.35
+      let far = farFresh ? self.farPeople : []
+      self.detectLock.unlock()
+
+      // far people from the zoomed pass, everyone else from the whole-court pass (which still covers the far part when the zoomed pass is not fresh)
+      let near = farFresh ? whole.filter { $0.rect.midY >= boundary } : whole
+      let all = near + far
+      self.detectLock.lock()
+      self.people = all.map { $0.rect }
       self.peopleAt = CACurrentMediaTime()
       self.detectLock.unlock()
-      self.onDetections?(boxes)
+      self.onDetections?(all.map { $0.dictionary })
     }
+  }
+
+  /// Intersection over union of two boxes, 0 to 1.
+  private static func overlap(_ a: CGRect, _ b: CGRect) -> CGFloat {
+    let i = a.intersection(b)
+    if i.isNull || i.width <= 0 || i.height <= 0 { return 0 }
+    let inter = i.width * i.height
+    return inter / (a.width * a.height + b.width * b.height - inter)
   }
 
   // MARK: shuttle

@@ -6,7 +6,8 @@ import { landingCall, type FloorPoint, type RallyTrace } from './rallyEnd';
 export interface ShuttleSample { t: number; x: number; y: number }
 
 /** Plausible shuttle speeds only. Beyond this the track jumped to something else. */
-const MAX_SPEED_MS = 75;
+/** Above the fastest smash on record (about 137 m/s, 493 km/h), so no real shot is thrown away. */
+const MAX_SPEED_MS = 150;
 /**
  * Floor positions further outside the court than this (as fractions of its width and length) are not our shuttle: they are
  * the next court's players and rackets, which the watched area also covers. A shuttle in the air projects a little beyond the lines, hence the room.

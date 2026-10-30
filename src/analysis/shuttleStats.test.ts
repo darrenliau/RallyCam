@@ -88,10 +88,13 @@ describe('ShuttleEstimator', () => {
     expect(est.stats(end)).not.toBeNull();
   });
 
-  it('does not report an impossible speed', () => {
-    const est = new ShuttleEstimator(identity);
-    const end = fly(est, 0, 1, 0, 0.04, 0.5); // the whole court width in 40 ms: ~150 m/s
-    expect(est.stats(end)?.speedKmh ?? 0).toBeLessThan(10);
+  it('does not report an impossible speed, but keeps a record-breaking smash', () => {
+    const impossible = new ShuttleEstimator(identity);
+    const end = fly(impossible, 0, 1, 0, 0.03, 0.5); // the whole court width in 30 ms: ~200 m/s
+    expect(impossible.stats(end)?.speedKmh ?? 0).toBeLessThan(10);
+    const smash = new ShuttleEstimator(identity);
+    const end2 = fly(smash, 0.1, 0.9, 0, 0.12, 0.5); // 0.8 of the court width (4.9 m) in 120 ms: ~41 m/s
+    expect(smash.stats(end2)!.speedKmh).toBeGreaterThan(130);
   });
 
   describe('on the court map', () => {

@@ -192,4 +192,8 @@ From the second shuttle log (`phase0/data/second-session.shuttle.csv.gz`, 12.7 m
 
 ## Replaying a recorded video through the shuttle tracker
 
-`npx tsx tools/replay-video.ts clip.mp4 [y0] [out.json]` (needs ffmpeg) runs the tracker over a video at full size, masking RallyCam's own cards, and lists every track it confirms with time, path and speed. Use it with short clips from the phone to see what the tracker finds without a build. On the first real-court clips it followed a real shuttle against the wall, and also latched onto the next court's players and a player's leg (no player boxes are available offline, unlike in the app).
+`npx tsx tools/replay-video.ts clip.mp4 [y0] [out.json] [--render annotated.mp4]` (needs ffmpeg, with libass for `--render`) runs the tracker over a video at full size, masking RallyCam's own cards, and lists every track it confirms with time, path and speed. With `--render` it also writes a copy of the clip with the tracker's view drawn on: a small white square on every candidate blob and a yellow ring with a SHUTTLE tag on the track. Use it with short clips from the phone to see what the tracker finds without a build. On the first real-court clips it followed a real shuttle against the wall, and also latched onto the next court's players and a player's leg (no player boxes are available offline, unlike in the app).
+
+## Far player detection
+
+The person detector now looks at the court twice (`CaptureController.detectIfDue`): the whole court area as before, and the far 55% again in two overlapping pieces, each scaled up to 1280 px wide (up to 1.6x). People whose middle is in the far part come from the zoomed pass, everyone else from the whole-court pass; the zoomed pass runs every other time and its result is reused for 0.35 s. This is meant to find the far-end player, who is small in the picture. If it costs too much frame rate, the debug panel's fps chip will show it.
