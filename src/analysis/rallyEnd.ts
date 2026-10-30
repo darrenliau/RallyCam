@@ -12,6 +12,8 @@ export interface RallyTrace {
   lastSeen: FloorPoint | null;
   /** Where the shuttle was first seen in this rally, which should be the serve. */
   firstSeen?: FloorPoint | null;
+  /** The shuttle was moving down the picture when it was last seen, so it probably came down rather than being hidden. */
+  descending?: boolean;
 }
 
 /** Who should be serving, and from where, according to the score. */
@@ -31,6 +33,8 @@ export interface Verdict {
 
 /** The shuttle must be gone this long before a rally is called finished. */
 export const GONE_S = 1.6;
+/** After a clear landing (shuttle lost while going down, well away from the lines and the net) the rally is called this soon. */
+export const LANDED_S = 0.6;
 /** A rally with fewer shots than this is probably noise or a serve being fumbled. */
 export const MIN_SHOTS = 2;
 const SINGLES_SIDE_M = 0.46;
@@ -50,7 +54,7 @@ const other = (s: Side): Side => (s === 'A' ? 'B' : 'A');
 export function judgeRally(trace: RallyTrace, now: number, singles: boolean): Verdict | null {
   const { lastHit, lastSeen } = trace;
   if (!lastHit || !lastSeen || trace.shots < MIN_SHOTS) return null;
-  if (now - lastSeen.t < GONE_S) return null;
+  if (!isRallyOver(trace, now, singles)) return null;
 
   const hitter = sideOf(lastHit.v);
   const lands = sideOf(lastSeen.v);
@@ -82,9 +86,23 @@ export function landingCall(p: { u: number; v: number }, singles: boolean): { in
   return { inBounds: outside < 0, outside };
 }
 
-/** True when the shuttle has been gone long enough that the rally is over (or was never one). */
-export function isRallyOver(trace: RallyTrace, now: number): boolean {
-  return !!trace.lastSeen && now - trace.lastSeen.t >= GONE_S;
+/** A landing position that is not close to a line or to the net, so the in or out call can be trusted. */
+function clearLanding(p: { u: number; v: number }, singles: boolean): boolean {
+  const { outside } = landingCall(p, singles);
+  return Math.abs(outside) >= UNSURE_M && Math.abs(p.v - 0.5) * COURT_L >= UNSURE_M;
+}
+
+/**
+ * True when the rally is over (or was never one). That is when the shuttle has been gone for GONE_S, or sooner, after
+ * LANDED_S, when it was lost coming down at a spot that is clearly in or clearly out. A shuttle lost any other way
+ * (going up, hidden behind a player) could still come back, so it gets the longer wait.
+ */
+export function isRallyOver(trace: RallyTrace, now: number, singles = false): boolean {
+  const seen = trace.lastSeen;
+  if (!seen) return false;
+  const gone = now - seen.t;
+  if (gone >= GONE_S) return true;
+  return gone >= LANDED_S && trace.descending === true && trace.shots >= MIN_SHOTS && clearLanding(seen, singles);
 }
 
 /**

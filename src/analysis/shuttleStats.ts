@@ -114,7 +114,7 @@ export class ShuttleEstimator {
   /** What happened so far in this rally, for deciding who won it (see rallyEnd.ts). */
   trace(): RallyTrace {
     const l = this.last;
-    return { shots: this.shots, lastHit: this.hit, firstSeen: this.first, lastSeen: l ? { t: l.t, u: l.u, v: l.v } : null };
+    return { shots: this.shots, lastHit: this.hit, firstSeen: this.first, descending: !!this.lastVel && this.lastVel.y > 0, lastSeen: l ? { t: l.t, u: l.u, v: l.v } : null };
   }
 
   /** What to show now, or null if the shuttle has not been seen for a while. */

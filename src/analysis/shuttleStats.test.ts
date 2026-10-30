@@ -118,6 +118,16 @@ describe('ShuttleEstimator', () => {
       expect(est.onMap(n / 60 + 0.6, false)).toBeNull();
     });
 
+    it('tells the scorer whether the shuttle was coming down when it was lost', () => {
+      const down = new ShuttleEstimator(identity);
+      fly(down, 0.3, 0.5, 0, 0.4, 0.5);
+      fall(down, 0.5, 0.5, 0.9, 0.4, 0.3);
+      expect(down.trace().descending).toBe(true);
+      const up = new ShuttleEstimator(identity);
+      for (let i = 0; i <= 24; i++) up.push({ t: i / 60, x: 0.4 + i * 0.005, y: 0.6 - (i * 0.2) / 24 });
+      expect(up.trace().descending).toBe(false);
+    });
+
     it('shows nothing before any shuttle has been seen, and after a new rally starts', () => {
       const est = new ShuttleEstimator(identity);
       expect(est.onMap(1, false)).toBeNull();

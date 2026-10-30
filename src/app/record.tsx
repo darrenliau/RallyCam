@@ -377,7 +377,7 @@ export default function Record() {
       if (ctx.recording && !ctx.over && !judged.current) {
         const trace = estimator.trace();
         let verdict: Verdict | null = null;
-        if (isRallyOver(trace, now)) {
+        if (isRallyOver(trace, now, ctx.singles)) {
           const sv = serveRef.current;
           const sideNames = sv.side === 'A' ? config.players.A : config.players.B;
           const playerIdx = (sv.side === 'A' ? 0 : config.players.A.length) + sv.playerIndex;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { judgeRally, serveProblem, isRallyOver, GONE_S } from './rallyEnd';
+import { judgeRally, serveProblem, isRallyOver, GONE_S, LANDED_S } from './rallyEnd';
 
 const P = (t: number, u: number, v: number) => ({ t, u, v });
 const now = (t: number) => t + GONE_S + 0.1;
@@ -67,5 +67,35 @@ describe('serveProblem', () => {
     const t = trace(0.7, 0.8);
     expect(isRallyOver(t, 3.5)).toBe(false);
     expect(isRallyOver(t, 3 + GONE_S + 0.1)).toBe(true);
+  });
+});
+
+describe('ending a rally at the landing', () => {
+  const landed = (v: number, extra: object = {}) => ({ shots: 4, lastHit: P(1, 0.5, 0.8), lastSeen: P(2, 0.5, v), descending: true, ...extra });
+
+  it('calls the rally soon after a clear landing, without the long wait', () => {
+    const t = landed(0.25);
+    expect(isRallyOver(t, 2 + LANDED_S + 0.05, false)).toBe(true);
+    expect(judgeRally(t, 2 + LANDED_S + 0.05, false)).toMatchObject({ winner: 'A' });
+    expect(LANDED_S).toBeLessThan(GONE_S);
+  });
+  it('waits a little first, in case the shuttle comes back', () => {
+    expect(isRallyOver(landed(0.25), 2 + LANDED_S - 0.2, false)).toBe(false);
+  });
+  it('uses the long wait when the shuttle was not coming down', () => {
+    expect(isRallyOver(landed(0.25, { descending: false }), 2 + LANDED_S + 0.05, false)).toBe(false);
+    expect(isRallyOver(landed(0.25, { descending: false }), 2 + GONE_S + 0.05, false)).toBe(true);
+  });
+  it('uses the long wait when the landing is close to a line or the net', () => {
+    expect(isRallyOver(landed(0.03), 2 + LANDED_S + 0.05, false)).toBe(false); // just inside the far baseline
+    expect(isRallyOver(landed(0.52), 2 + LANDED_S + 0.05, false)).toBe(false); // by the net
+    expect(isRallyOver(landed(0.03), 2 + GONE_S + 0.05, false)).toBe(true);
+  });
+  it('calls a clearly out landing early too', () => {
+    const v = judgeRally(landed(-0.12), 2 + LANDED_S + 0.05, false)!;
+    expect(v.winner).toBe('B'); // A hit it out
+  });
+  it('does not end a rally with too few shots early', () => {
+    expect(isRallyOver(landed(0.25, { shots: 1 }), 2 + LANDED_S + 0.05, false)).toBe(false);
   });
 });
