@@ -12,14 +12,23 @@ public class RallyCamCapturePreview: ExpoView {
     previewLayer.session = CaptureController.shared.session
     previewLayer.videoGravity = .resizeAspectFill   // fills the screen, like the overlay's "cover" maths assumes
     layer.addSublayer(previewLayer)
+    NotificationCenter.default.addObserver(self, selector: #selector(cameraChanged), name: CaptureController.cameraChanged, object: nil)
+  }
+
+  @objc private func cameraChanged() { turnLandscape() }
+
+  deinit { NotificationCenter.default.removeObserver(self) }
+
+  private func turnLandscape() {
+    if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
+      connection.videoOrientation = CaptureController.currentVideoOrientation()
+    }
   }
 
   public override func layoutSubviews() {
     super.layoutSubviews()
     previewLayer.frame = bounds
-    if let connection = previewLayer.connection, connection.isVideoOrientationSupported {
-      connection.videoOrientation = CaptureController.currentVideoOrientation()
-    }
+    turnLandscape()
     CaptureController.shared.refreshOrientation()
   }
 }

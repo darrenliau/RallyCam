@@ -165,6 +165,9 @@ final class CaptureController: NSObject {
     }
   }
 
+  /// Posted after the camera input changed, so the preview can turn its new connection landscape.
+  static let cameraChanged = Notification.Name("RallyCamCameraChanged")
+
   private static let lensTypes: [(AVCaptureDevice.DeviceType, String)] = [
     (.builtInUltraWideCamera, "ultra-wide"), (.builtInWideAngleCamera, "wide"), (.builtInTelephotoCamera, "tele"),
   ]
@@ -178,6 +181,12 @@ final class CaptureController: NSObject {
       }
       do {
         let fps = try self.configure(targetFps: targetFps, lens: lens)
+        // A new camera input makes new connections, which start in portrait. Turn them landscape again, preview included.
+        if let c = self.videoOutput.connection(with: .video), c.isVideoOrientationSupported {
+          c.videoOrientation = CaptureController.currentVideoOrientation()
+          if c.isVideoStabilizationSupported { c.preferredVideoStabilizationMode = .off }
+        }
+        DispatchQueue.main.async { NotificationCenter.default.post(name: CaptureController.cameraChanged, object: nil) }
         completion(.success(CaptureInfo(fps: fps, width: self.frameWidth, height: self.frameHeight, lens: self.currentLens())))
       } catch {
         completion(.failure(error))
