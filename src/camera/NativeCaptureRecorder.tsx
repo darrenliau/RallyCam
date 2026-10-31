@@ -1,5 +1,5 @@
-import { newGameVideoFile } from '../export/storage';
-import { forwardRef, useEffect, useImperativeHandle } from 'react';
+import { newAnalysisVideoFile, newGameVideoFile } from '../export/storage';
+import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Capture, CapturePreview } from '../../modules/rallycam-export/src/capture';
 import type { RecorderHandle, RecorderProps } from './types';
 
@@ -12,8 +12,9 @@ const VIDEO_FPS = 60;
  * iPhone camera made for RallyCam (modules/rallycam-export/ios): a preview, person detection with Apple's Vision framework,
  * and a recorder that draws the overlay onto every frame while it records. The saved file already has the overlay in it.
  */
-const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, onInterruption, onPressure, detection, videoProfile, lens, onLens }, ref) {
+const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, onInterruption, onPressure, detection, videoProfile, lens, onLens, analysisCopy }, ref) {
   const native = Capture!;
+  const analysisUri = useRef<string | undefined>(undefined);
   const Preview = CapturePreview!;
 
   useEffect(() => {
@@ -56,15 +57,19 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
 
   useImperativeHandle(ref, () => ({
     bakesOverlay: true,
+    get analysisUri() { return analysisUri.current; },
     async start() {
       const p = videoProfile ?? { fps: VIDEO_FPS, width: 1920, height: 1080, bitrate: 14_000_000 };
       // Written straight into the app's own storage, so a game cut off by a crash can be found and recovered
       const uri = newGameVideoFile('mp4').uri;
-      native.startRecording(uri, p.fps, p.width, p.height, p.bitrate);
+      analysisUri.current = analysisCopy ? newAnalysisVideoFile().uri : undefined;
+      native.startRecording(uri, p.fps, p.width, p.height, p.bitrate, analysisUri.current ?? null);
       return uri;
     },
     async stop() {
-      return (await native.stopRecording()) ?? undefined;
+      const done = await native.stopRecording();
+      analysisUri.current = done.analysisUri ?? undefined;
+      return done.uri ?? undefined;
     },
     async setLens(next: string) {
       const info = await native.setLens(next, CAPTURE_FPS);
@@ -75,7 +80,7 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
     setOverlay(scene) {
       native.setOverlay(JSON.stringify(scene));
     },
-  }), [native, videoProfile, onFps, onLens]);
+  }), [native, videoProfile, onFps, onLens, analysisCopy]);
 
   return <Preview style={style} />;
 });

@@ -1,5 +1,8 @@
 import { Directory, File, Paths } from 'expo-file-system';
 
+/** Bit rate of the clean analysis copy (see CaptureController.analysisBitRate), to say how much space it takes. */
+export const ANALYSIS_MB_PER_MINUTE = (5_000_000 / 8) * 60 / 1e6;
+
 /**
  * Moves a file into the app's documents folder. The cache and temp folders can be emptied by iOS when space is low,
  * and the camera writes its video to a temp folder. Returns the new uri, or the old one if the move failed.
@@ -81,6 +84,18 @@ export function newShuttleLogFile(): File {
   const dir = new Directory(Paths.document, 'games');
   if (!dir.exists) dir.create();
   return new File(dir, `game-${Date.now()}.shuttle.csv`);
+}
+
+/** A new file for the clean analysis copy of a game, next to the video. */
+export function newAnalysisVideoFile(): File {
+  const dir = new Directory(Paths.document, 'games');
+  if (!dir.exists) dir.create();
+  return new File(dir, `game-${Date.now()}.analysis.mp4`);
+}
+
+/** Where the clean analysis copy of a finished game is kept. */
+export function analysisVideoUriFor(matchId: string): string {
+  return new File(new Directory(Paths.document, 'games'), `${matchId}.analysis.mp4`).uri;
 }
 
 /** Where the shuttle log of a finished game is kept. */

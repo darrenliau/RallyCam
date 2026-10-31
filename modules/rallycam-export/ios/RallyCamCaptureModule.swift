@@ -93,18 +93,19 @@ public class RallyCamCaptureModule: Module {
     }
 
     // Starts writing a video at the next frame. The file has outputFps frames per second, is width x height, and about bitRate bits per second.
-    Function("startRecording") { (uri: String, outputFps: Double, width: Int, height: Int, bitRate: Int) in
-      let url = URL(string: uri).flatMap { $0.scheme != nil ? $0 : nil } ?? URL(fileURLWithPath: uri)
-      CaptureController.shared.startRecording(url: url, outputFps: outputFps, width: width, height: height, bitRate: bitRate)
+    // analysisUri, when given, is a second file that gets a clean (no overlay), smaller copy of the picture for analysing the game afterwards.
+    Function("startRecording") { (uri: String, outputFps: Double, width: Int, height: Int, bitRate: Int, analysisUri: String?) in
+      func fileURL(_ s: String) -> URL { URL(string: s).flatMap { $0.scheme != nil ? $0 : nil } ?? URL(fileURLWithPath: s) }
+      CaptureController.shared.startRecording(url: fileURL(uri), outputFps: outputFps, width: width, height: height, bitRate: bitRate, analysisURL: analysisUri.map(fileURL))
     }
 
-    // Resolves with the finished file's uri, overlay included.
+    // Resolves with the finished file's uri (overlay included) and the clean analysis copy's uri, each null if there is none.
     AsyncFunction("stopRecording") { (promise: Promise) in
-      CaptureController.shared.stopRecording { url, error in
+      CaptureController.shared.stopRecording { url, analysis, error in
         if let error {
           promise.reject("ERR_RECORDING", error.localizedDescription)
         } else {
-          promise.resolve(url?.absoluteString)
+          promise.resolve(["uri": url?.absoluteString ?? NSNull(), "analysisUri": analysis?.absoluteString ?? NSNull()] as [String: Any])
         }
       }
     }

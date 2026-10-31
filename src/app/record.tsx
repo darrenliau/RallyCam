@@ -534,6 +534,8 @@ export default function Record() {
       keepFile(shuttleLogUri.current, `${id}.shuttle.csv`);
       shuttleLogUri.current = null;
     }
+    const analysis = recorder.current?.analysisUri;
+    if (analysis) keepFile(analysis, `${id}.analysis.mp4`);
     const kept = uri ? keepFile(uri, `${id}.${extensionOf(uri)}`) : null;
     await finishMatch(id, kept, startedAt.current ? Date.now() - startedAt.current : 0);
     // The iPhone camera draws the overlay while recording, so that file is already the finished video.
@@ -584,6 +586,7 @@ export default function Record() {
         onError={setRecError}
         onFps={setFps}
         lens={settings.lens}
+        analysisCopy={settings.keepAnalysisCopy && !footage}
         onLens={setLensInfo}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
         videoProfile={usesNativeCapture ? profile : undefined}

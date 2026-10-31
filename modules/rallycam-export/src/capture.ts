@@ -31,8 +31,10 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   getLenses(): string[];
   setLens(lens: string, targetFps: number): Promise<{ fps: number; width: number; height: number; lens: string }>;
   stopSession(): Promise<void>;
-  startRecording(uri: string, outputFps: number, width: number, height: number, bitRate: number): void;
-  stopRecording(): Promise<string | null>;
+  /** `analysisUri`, when given, gets a second file with a clean (no overlay) 960 wide copy of the picture, for analysing the game afterwards. */
+  startRecording(uri: string, outputFps: number, width: number, height: number, bitRate: number, analysisUri: string | null): void;
+  /** `analysisUri` is null when no clean copy was asked for or it could not be made. */
+  stopRecording(): Promise<{ uri: string | null; analysisUri: string | null }>;
   setOverlay(json: string): void;
   getStatus(): { overlayPushes: number; overlayDecoded: number; overlayFailed: number; framesWritten: number; framesWithOverlay: number; lastProblem: string; lens: string; running: boolean; framesIn: number; luma: number; audioBuffers: number; audioLevel: number; audioInFile: boolean; device: string; exposureMs: number; iso: number; interrupted: boolean };
   setDetection(enabled: boolean, x: number, y: number, w: number, h: number): void;

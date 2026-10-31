@@ -15,6 +15,8 @@ export interface RecorderHandle {
   setOverlay?(scene: Scene): void;
   /** True when the file `stop()` returns already has the overlay drawn into it. */
   readonly bakesOverlay?: boolean;
+  /** The clean copy of the last recording (no overlay), when one was asked for with `analysisCopy` and the camera could make it. Set once `stop()` has finished. */
+  readonly analysisUri?: string;
   /** Only the iPhone camera can change lens. Not while recording. Resolves with the frame rate and lens now in use. */
   setLens?(lens: string): Promise<{ fps: number; lens: string }>;
 }
@@ -37,6 +39,8 @@ export interface RecorderProps {
   onInterruption?: (info: { interrupted: boolean; reason: string }) => void;
   /** How hot or strained the phone is: nominal, fair, serious, critical or shutdown. */
   onPressure?: (level: string) => void;
+  /** Also write a clean, smaller copy of the picture with no overlay, for analysing the game afterwards. iPhone camera only. */
+  analysisCopy?: boolean;
   /** The lens to start with ("auto", "ultra-wide", "wide" or "tele"). iPhone camera only. */
   lens?: string;
   /** Called when the camera starts and after every lens change, with the lens in use and the lenses the phone has. */

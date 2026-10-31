@@ -14,7 +14,7 @@ import { MatchOverlay } from '../../components/MatchOverlay';
 import { buildAss } from '../../export/ass';
 import { cancelExport, canExportOnDevice, exportVideoWithOverlay } from '../../export/nativeExport';
 import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFiles';
-import { extensionOf, fileBytes, fileExists, formatBytes, keepFile, removeFile, shuttleLogUriFor } from '../../export/storage';
+import { analysisVideoUriFor, extensionOf, fileBytes, fileExists, formatBytes, keepFile, removeFile, shuttleLogUriFor } from '../../export/storage';
 import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
 import { HIDE_EMPTY_SHUTTLE } from '../../config';
@@ -93,6 +93,7 @@ export default function MatchReview() {
   const remove = async () => {
     removeFile(match.videoUri);
     removeFile(match.overlayVideoUri);
+    removeFile(analysisVideoUriFor(match.id));
     await deleteMatch(match.id);
     router.back();
   };
@@ -245,6 +246,16 @@ export default function MatchReview() {
           </Card>
         );
       })}
+      {fileExists(analysisVideoUriFor(match.id)) && (
+        <Card style={{ gap: 6 }}>
+          <Label>Clean copy for analysis</Label>
+          <Text style={s.muted}>
+            {formatBytes(fileBytes(analysisVideoUriFor(match.id)))}. The same game with no score or tags drawn on it, at 960 pixels wide, for checking shuttle tracking on a computer.
+          </Text>
+          <Button kind="ghost" label="Share clean copy" onPress={() => Sharing.shareAsync(analysisVideoUriFor(match.id), { mimeType: 'video/mp4', dialogTitle: 'Clean copy for analysis' }).catch(() => {})} />
+          <Button kind="ghost" label="Delete clean copy" onPress={() => { removeFile(analysisVideoUriFor(match.id)); reload(); }} />
+        </Card>
+      )}
       {fileExists(shuttleLogUriFor(match.id)) && (
         <Card style={{ gap: 6 }}>
           <Label>Shuttle tracker log</Label>

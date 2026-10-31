@@ -104,6 +104,17 @@ final class CaptureController: NSObject {
   private var adaptor: AVAssetWriterInputPixelBufferAdaptor?
   private var sessionStart = CMTime.invalid
   private var nextKeep = -Double.infinity
+  // A second, clean copy of the camera picture (no overlay) for analysing the game afterwards. Smaller than the main video,
+  // because the shuttle model only looks at a 512 x 288 picture. Touched only on videoQueue.
+  private var analysisURL: URL?
+  private var analysisWriter: AVAssetWriter?
+  private var analysisInput: AVAssetWriterInput?
+  private var analysisAdaptor: AVAssetWriterInputPixelBufferAdaptor?
+  private var analysisNext = -Double.infinity
+  private var lastAnalysisPts = -Double.infinity
+  private static let analysisFps = 60.0
+  private static let analysisWidth = 960
+  private static let analysisBitRate = 5_000_000
   private let audioLock = NSLock()
   private var audioOpen = false
 
@@ -706,7 +717,7 @@ final class CaptureController: NSObject {
 
   // MARK: recording
 
-  func startRecording(url: URL, outputFps: Double, width: Int, height: Int, bitRate: Int) {
+  func startRecording(url: URL, outputFps: Double, width: Int, height: Int, bitRate: Int, analysisURL: URL? = nil) {
     bump { pushes = 0; decoded = 0; failed = 0; composited = 0; withOverlay = 0; lastProblem = "" }
     videoQueue.async {
       self.recordingURL = url
@@ -715,23 +726,44 @@ final class CaptureController: NSObject {
       self.outputHeight = height > 0 ? height : 1080
       self.outputBitRate = bitRate > 0 ? bitRate : 14_000_000
       self.nextKeep = -Double.infinity
+      self.analysisURL = analysisURL
+      self.analysisNext = -Double.infinity
       self.state = .armed
     }
   }
 
-  func stopRecording(completion: @escaping (URL?, Error?) -> Void) {
+  /// Finishes the clean analysis copy, if there is one. It is optional: if it failed, whatever was written is kept, or nothing.
+  private func finishAnalysis(_ done: @escaping (URL?) -> Void) {
+    guard let w = analysisWriter else { done(nil); return }
+    let url = w.outputURL
+    analysisInput?.markAsFinished()
+    analysisWriter = nil
+    analysisInput = nil
+    analysisAdaptor = nil
+    analysisURL = nil
+    if w.status == .writing {
+      w.finishWriting { done(FileManager.default.fileExists(atPath: url.path) ? url : nil) }
+    } else {
+      done(FileManager.default.fileExists(atPath: url.path) ? url : nil)
+    }
+  }
+
+  /// Completes with the finished video, the clean analysis copy (nil if none was asked for or it failed), and an error if the video failed.
+  func stopRecording(completion: @escaping (URL?, URL?, Error?) -> Void) {
     videoQueue.async {
       if self.state != .recording, let failedWriter = self.writer, failedWriter.status == .failed {
         // The file is written in pieces, so what was saved before the failure can still be played.
         let url = failedWriter.outputURL
         self.writer = nil; self.videoInput = nil; self.audioInput = nil; self.adaptor = nil
         self.state = .idle
-        completion(FileManager.default.fileExists(atPath: url.path) ? url : nil, nil)
+        self.finishAnalysis { analysis in
+          completion(FileManager.default.fileExists(atPath: url.path) ? url : nil, analysis, nil)
+        }
         return
       }
       guard self.state == .recording, let writer = self.writer else {
         self.state = .idle
-        completion(nil, nil)
+        self.finishAnalysis { analysis in completion(nil, analysis, nil) }
         return
       }
       self.state = .stopping
@@ -754,8 +786,8 @@ final class CaptureController: NSObject {
           self.audioInput = nil
           self.adaptor = nil
           self.state = .idle
+          self.finishAnalysis { analysis in completion(error == nil ? url : nil, analysis, error) }
         }
-        completion(error == nil ? url : nil, error)
       }
     }
   }
@@ -814,6 +846,7 @@ final class CaptureController: NSObject {
       sessionStart = firstTime
       audioOpen = audio != nil
       audioLock.unlock()
+      openAnalysisWriter(cameraWidth: width, cameraHeight: height, firstTime: firstTime)
       lastVideoPts = -Double.infinity
       videoWritten = 0
       firstPts = CMTimeGetSeconds(firstTime)
@@ -823,6 +856,62 @@ final class CaptureController: NSObject {
       state = .idle
       onError?("Recording could not start: \(error.localizedDescription)")
     }
+  }
+
+  /// Opens the clean copy next to the main video. A failure here is only logged: the game video matters more.
+  private func openAnalysisWriter(cameraWidth: Int, cameraHeight: Int, firstTime: CMTime) {
+    guard let url = analysisURL else { return }
+    do {
+      try? FileManager.default.removeItem(at: url)
+      let w = try AVAssetWriter(outputURL: url, fileType: .mp4)
+      w.movieFragmentInterval = CMTime(seconds: 5, preferredTimescale: 600)
+      let width = CaptureController.analysisWidth
+      var height = Int((Double(width) * Double(cameraHeight) / Double(max(1, cameraWidth))).rounded())
+      height -= height % 2
+      let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+        AVVideoCodecKey: AVVideoCodecType.h264,
+        AVVideoWidthKey: width,
+        AVVideoHeightKey: height,
+        AVVideoCompressionPropertiesKey: [
+          AVVideoAverageBitRateKey: CaptureController.analysisBitRate,
+          AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel,
+          AVVideoAllowFrameReorderingKey: false,
+          AVVideoExpectedSourceFrameRateKey: Int(CaptureController.analysisFps),
+        ],
+      ])
+      input.expectsMediaDataInRealTime = true
+      let adaptor = AVPixelBufferAdaptorFactory.make(for: input, width: width, height: height)
+      guard w.canAdd(input) else { throw CaptureError.setup("cannot add the analysis input") }
+      w.add(input)
+      guard w.startWriting() else { throw CaptureError.setup(w.error?.localizedDescription ?? "cannot start the analysis copy") }
+      w.startSession(atSourceTime: firstTime)
+      analysisWriter = w
+      analysisInput = input
+      analysisAdaptor = adaptor
+      lastAnalysisPts = -Double.infinity
+    } catch {
+      NSLog("RallyCam: the clean analysis copy could not be started: \(error.localizedDescription)")
+      analysisWriter = nil
+      analysisURL = nil
+    }
+  }
+
+  /// Writes one camera frame, scaled down and with no overlay, to the analysis copy.
+  private func appendAnalysis(_ pixelBuffer: CVPixelBuffer, time: CMTime) {
+    guard let w = analysisWriter, let input = analysisInput, let adaptor = analysisAdaptor else { return }
+    if w.status == .failed {
+      NSLog("RallyCam: the analysis copy stopped: \(CaptureController.describe(w.error))")
+      return
+    }
+    guard w.status == .writing, input.isReadyForMoreMediaData, let pool = adaptor.pixelBufferPool else { return }
+    let seconds = CMTimeGetSeconds(time)
+    guard seconds > lastAnalysisPts else { return }
+    var created: CVPixelBuffer?
+    CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created)
+    guard let target = created else { return }
+    let scale = CGFloat(CVPixelBufferGetWidth(target)) / CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+    ciContext.render(CIImage(cvPixelBuffer: pixelBuffer).transformed(by: CGAffineTransform(scaleX: scale, y: scale)), to: target)
+    if adaptor.append(target, withPresentationTime: time) { lastAnalysisPts = seconds }
   }
 
   private func appendVideo(_ pixelBuffer: CVPixelBuffer, time: CMTime) {
@@ -997,8 +1086,16 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
       openWriter(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer), firstTime: pts)
     }
     if state == .recording {
-      // keep about `outputFps` frames per second of the 120 the camera delivers
       let seconds = CMTimeGetSeconds(pts)
+      // the clean analysis copy keeps 60 frames a second whatever the video's own frame rate is
+      if analysisWriter != nil {
+        let step = 1.0 / CaptureController.analysisFps
+        if analysisNext == -Double.infinity || seconds + 1e-4 >= analysisNext {
+          analysisNext = (analysisNext == -Double.infinity || seconds > analysisNext + step) ? seconds + step : analysisNext + step
+          appendAnalysis(pixelBuffer, time: pts)
+        }
+      }
+      // keep about `outputFps` frames per second of the 120 the camera delivers
       let interval = 1.0 / outputFps
       if nextKeep != -Double.infinity && seconds + 1e-4 < nextKeep { return }
       nextKeep = (nextKeep == -Double.infinity || seconds > nextKeep + interval) ? seconds + interval : nextKeep + interval

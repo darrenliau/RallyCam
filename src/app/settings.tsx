@@ -5,7 +5,7 @@ import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-nat
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usesNativeCapture } from '../camera/RecorderView';
 import { Card, Label } from '../components/ui';
-import { formatBytes, freeSpaceBytes, videosFolderStats } from '../export/storage';
+import { ANALYSIS_MB_PER_MINUTE, formatBytes, freeSpaceBytes, videosFolderStats } from '../export/storage';
 import { QUALITY, mbPerMinute, updateSettings, useSettings, type VideoQuality } from '../settings';
 import { colors, radius } from '../theme';
 
@@ -64,6 +64,20 @@ export default function Settings() {
         <Card style={{ gap: 4 }}>
           <Label>Test build</Label>
           <Text style={s.muted}>Experimental features are on in this build: the debug panel and "Simulate players" on the Record screen, shuttle speed and shot cards, and the shuttle log on the Review screen. Please send feedback from TestFlight.</Text>
+        </Card>
+      )}
+
+      {usesNativeCapture && EXPERIMENTS && (
+        <Card style={{ gap: 6 }}>
+          <View style={s.row}>
+            <View style={{ flex: 1 }}>
+              <Label>Keep a clean copy · experimental</Label>
+              <Text style={s.muted}>
+                Also saves each game with no overlay drawn on it, 960 pixels wide, about {Math.round(ANALYSIS_MB_PER_MINUTE)} MB a minute on top of the normal video. The shuttle model needs a picture without the score and tags on it. Share it from the game's page.
+              </Text>
+            </View>
+            <Switch value={settings.keepAnalysisCopy} onValueChange={(v) => updateSettings({ keepAnalysisCopy: v })} accessibilityLabel="Keep a clean copy for analysis" />
+          </View>
         </Card>
       )}
 
