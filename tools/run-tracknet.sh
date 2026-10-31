@@ -21,11 +21,10 @@ for f in TrackNet_best.pt InpaintNet_best.pt; do
   [ -f "$REPO/ckpts/$f" ] || { echo "Missing $REPO/ckpts/$f - see the note at the top of this script."; exit 1; }
 done
 
-if [ ! -d "$VENV" ]; then
-  python3 -m venv "$VENV"
-  # The repository pins very old versions; recent ones work and also run on an Apple Silicon Mac (MPS) or plain CPU.
-  "$VENV/bin/pip" install --quiet torch numpy opencv-python pandas pillow tqdm parse plotly dash
-fi
+[ -d "$VENV" ] || python3 -m venv "$VENV"
+# The repository pins very old versions; recent ones work and also run on an Apple Silicon Mac (MPS) or plain CPU.
+# This list is every package its predict.py imports (found by reading the code). Installing again is harmless.
+"$VENV/bin/pip" install --quiet torch numpy opencv-python pandas pillow tqdm parse matplotlib pycocotools
 
 OUT="$PWD/prediction"
 mkdir -p "$OUT"
