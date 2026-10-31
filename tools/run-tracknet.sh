@@ -31,6 +31,8 @@ command -v ffprobe >/dev/null || { echo "ffprobe is needed (it comes with ffmpeg
 # Width of the copy TrackNet reads. 640 keeps it light enough for an 8 GB Mac; raise it (TRACKNET_WIDTH=960) if you have more memory.
 SMALL="${TRACKNET_WIDTH:-640}"
 BATCH="${TRACKNET_BATCH:-2}"
+# TRACKNET_INPAINT=0 skips TrackNet's gap-filling second stage, so the CSV only says "seen" where the model really saw it.
+INPAINT="${TRACKNET_INPAINT:-1}"
 OUT="$PWD/prediction"
 mkdir -p "$OUT"
 TMP="$(mktemp -d)"
@@ -46,7 +48,7 @@ for clip in "$@"; do
   # (A plain H.264 copy also fixes OpenCV not being able to read the phone's video as saved.)
   ffmpeg -v error -y -i "$clip" -vf scale=$SMALL:-2 -c:v libx264 -crf 16 -pix_fmt yuv420p -an "$TMP/$stem.mp4"
   (cd "$REPO" && "$VENV/bin/python" predict.py --video_file "$TMP/$stem.mp4" --tracknet_file ckpts/TrackNet_best.pt \
-    --inpaintnet_file ckpts/InpaintNet_best.pt --save_dir "$OUT" --batch_size $BATCH)
+    $([ "$INPAINT" = 1 ] && echo "--inpaintnet_file ckpts/InpaintNet_best.pt") --save_dir "$OUT" --batch_size $BATCH)
   # the positions are in the shrunken copy: scale them back to the original video's pixels
   "$VENV/bin/python" - "$OUT/${stem}_ball.csv" "$width" "$SMALL" <<'PY'
 import sys

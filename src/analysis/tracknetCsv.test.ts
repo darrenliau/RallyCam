@@ -20,4 +20,16 @@ describe('parseTracknetCsv', () => {
   it('rejects a file that is not a TrackNet CSV', () => {
     expect(() => parseTracknetCsv('a,b\n1,2\n', 60)).toThrow();
   });
+
+  it('drops runs of the same position, which are InpaintNet filling gaps', () => {
+    const lines = ['Frame,Visibility,X,Y'];
+    for (let f = 0; f < 4; f++) lines.push(`${f},1,${100 + f * 10},200`);
+    for (let f = 4; f < 14; f++) lines.push(`${f},1,912,267`); // stuck for 10 frames
+    for (let f = 14; f < 17; f++) lines.push(`${f},1,${300 + f},210`);
+    const rows = parseTracknetCsv(lines.join('\n'), 60);
+    expect(rows.slice(0, 4).every((r) => r.track)).toBe(true);
+    expect(rows.slice(4, 14).some((r) => r.track)).toBe(false);
+    expect(rows.slice(14).every((r) => r.track)).toBe(true);
+    expect(parseTracknetCsv(lines.join('\n'), 60, undefined, false).slice(4, 14).every((r) => r.track)).toBe(true);
+  });
 });
