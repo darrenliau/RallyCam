@@ -26,12 +26,19 @@ done
 # This list is every package its predict.py imports (found by reading the code). Installing again is harmless.
 "$VENV/bin/pip" install --quiet torch numpy opencv-python pandas pillow tqdm parse matplotlib pycocotools
 
+command -v ffmpeg >/dev/null || { echo "ffmpeg is needed (brew install ffmpeg)."; exit 1; }
 OUT="$PWD/prediction"
 mkdir -p "$OUT"
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
 for clip in "$@"; do
-  abs="$(cd "$(dirname "$clip")" && pwd)/$(basename "$clip")"
-  echo "== $abs"
-  (cd "$REPO" && "$VENV/bin/python" predict.py --video_file "$abs" --tracknet_file ckpts/TrackNet_best.pt \
+  [ -f "$clip" ] || { echo "No such file: $clip"; exit 1; }
+  name="$(basename "$clip")"
+  echo "== $name"
+  # OpenCV (inside the Python packages) often cannot decode the phone's video as saved, so make a plain H.264 copy first.
+  # Same size and frame rate; the prediction CSV keeps the original file's name.
+  ffmpeg -v error -y -i "$clip" -c:v libx264 -crf 16 -pix_fmt yuv420p -an "$TMP/$name"
+  (cd "$REPO" && "$VENV/bin/python" predict.py --video_file "$TMP/$name" --tracknet_file ckpts/TrackNet_best.pt \
     --inpaintnet_file ckpts/InpaintNet_best.pt --save_dir "$OUT" --batch_size 8)
 done
 echo "Done. CSVs are in $OUT"
