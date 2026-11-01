@@ -59,6 +59,8 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   getStatus(): { overlayPushes: number; overlayDecoded: number; overlayFailed: number; framesWritten: number; framesWithOverlay: number; lastProblem: string; lens: string; running: boolean; framesIn: number; luma: number; audioBuffers: number; audioLevel: number; audioInFile: boolean; device: string; exposureMs: number; iso: number; interrupted: boolean };
   setDetection(enabled: boolean, x: number, y: number, w: number, h: number): void;
   setShuttle(enabled: boolean, x: number, y: number, w: number, h: number): void;
+  /** The next camera frame as a grey picture, shrunk by a whole number to about `maxWidth` pixels wide: { width, height, data: base64 of one byte per pixel }. For finding the court lines. */
+  grabStill(maxWidth: number): Promise<{ width: number; height: number; data: string }>;
   /** TrackNetV3 on the Neural Engine. Needs the model file in the build (ios/Models/README.md). Positions arrive with onShuttleModel. */
   setShuttleModel(enabled: boolean): void;
   getShuttleModelStatus(): ShuttleModelStatus;

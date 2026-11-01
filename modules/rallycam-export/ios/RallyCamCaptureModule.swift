@@ -128,6 +128,17 @@ public class RallyCamCaptureModule: Module {
       CaptureController.shared.setShuttle(roi: enabled ? CGRect(x: x, y: y, width: w, height: h) : nil)
     }
 
+    // The next camera frame as a grey picture, for finding the court lines. Resolves with { width, height, data (base64) }.
+    AsyncFunction("grabStill") { (maxWidth: Int, promise: Promise) in
+      CaptureController.shared.requestStill(maxWidth: maxWidth) { still in
+        if let still {
+          promise.resolve(["width": still.width, "height": still.height, "data": still.luma.base64EncodedString()])
+        } else {
+          promise.reject("ERR_STILL", "No camera picture arrived")
+        }
+      }
+    }
+
     // The shuttle model (TrackNetV3 on the Neural Engine). It reports positions with the onShuttleModel event, 8 frames at a time.
     Function("setShuttleModel") { (enabled: Bool) in
       CaptureController.shared.setShuttleModel(enabled: enabled)

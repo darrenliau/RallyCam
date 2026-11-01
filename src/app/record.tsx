@@ -28,6 +28,8 @@ import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
+import { decodeBase64 } from '../analysis/base64';
+import { consensusCourt, findCourt, type CourtFit } from '../analysis/courtLines';
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
 import { courtOfServer, inferWinnerFromServe } from '../analysis/nextServe';
@@ -78,6 +80,7 @@ export default function Record() {
   const [lensBusy, setLensBusy] = useState(false);
   const [lensChanged, setLensChanged] = useState(false);
   const lensRestored = useRef(false);
+  const findCourtRef = useRef<() => void>(() => {});
   const [ending, setEnding] = useState(false);
   const [pausedBecause, setPausedBecause] = useState<string | null>(null);
   const [pressure, setPressure] = useState('nominal');
@@ -184,6 +187,7 @@ export default function Record() {
       await recorder.current.setLens(name);
       updateSettings({ lens: name as 'ultra-wide' | 'wide' | 'tele' });
       setLensChanged(true);
+      setTimeout(() => findCourtRef.current(), 1200);
     } catch (e) {
       setRecError(`The lens could not be changed: ${(e as Error).message}`);
     } finally {
@@ -236,6 +240,49 @@ export default function Record() {
   // Recording starts only once the camera is ready and the court is locked (a saved venue court counts as locked).
   const [cameraReady, setCameraReady] = useState(false);
   const [recording, setRecording] = useState(false);
+
+  // Drawing the court from the camera: a few pictures a moment apart, the lines found in each, the best agreeing one kept as the starting corners.
+  const [courtFinder, setCourtFinder] = useState<'idle' | 'finding' | 'found' | 'failed'>('idle');
+  const finderBusy = useRef(false);
+  const findCourtNow = useCallback(async () => {
+    const native = Capture;
+    if (!native || finderBusy.current) return;
+    finderBusy.current = true;
+    setCourtFinder('finding');
+    try {
+      const fits: CourtFit[] = [];
+      for (let i = 0; i < 3; i++) {
+        if (i) await new Promise((r) => setTimeout(r, 400));
+        const still = await native.grabStill(640);
+        await new Promise((r) => setTimeout(r, 0)); // let the screen update between pictures
+        const fit = findCourt({ data: decodeBase64(still.data), width: still.width, height: still.height });
+        if (fit) fits.push(fit);
+      }
+      const best = consensusCourt(fits);
+      if (best && best.confidence >= 0.3) {
+        const g = { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height };
+        const to = (p: { x: number; y: number }) => frameToScreen(p, g);
+        setDragged({ farLeft: to(best.corners.farLeft), farRight: to(best.corners.farRight), nearRight: to(best.corners.nearRight), nearLeft: to(best.corners.nearLeft) });
+        setCourtFinder('found');
+      } else {
+        setCourtFinder('failed');
+      }
+    } catch {
+      setCourtFinder('failed');
+    } finally {
+      finderBusy.current = false;
+    }
+  }, []);
+  // A court that is not saved yet gets drawn automatically once the camera has settled. A saved court starts locked and is left alone.
+  const finderTried = useRef(false);
+  useEffect(() => {
+    if (finderTried.current || !usesNativeCapture || !cameraReady || !venueLoaded || !aligning || recording || dragged || venueCorners || savedCorners[sizeKey]) return;
+    finderTried.current = true;
+    setTimeout(() => { findCourtNow(); }, 1500);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraReady, venueLoaded, aligning, recording]);
+  findCourtRef.current = findCourtNow;
+
   const onReady = useCallback(() => setCameraReady(true), []);
   useEffect(() => {
     if (!cameraReady || aligning || !venueLoaded || !settings.ready || recordingStarted.current) return;
@@ -733,6 +780,11 @@ export default function Record() {
             <Text style={s.chipText}>‹ Back</Text>
           </Pressable>
         )}
+        {aligning && !recording && usesNativeCapture && (
+          <Pressable style={s.chip} onPress={() => { findCourtNow(); }} disabled={courtFinder === 'finding'} accessibilityRole="button" accessibilityLabel="Find the court lines">
+            <Text style={s.chipText}>{courtFinder === 'finding' ? 'Looking…' : 'Find court'}</Text>
+          </Pressable>
+        )}
         {aligning && !recording && lensInfo && lensInfo.available.length > 1 && (
           <View style={s.chip} accessibilityLabel="Camera lens">
             {lensInfo.available.map((name) => (
@@ -799,7 +851,7 @@ export default function Record() {
       {venueLoaded && aligning && (
         <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
           <Text style={s.bannerText}>
-            {lensChanged ? 'The lens changed, so the court looks different. Drag the four dots onto the corners again. ' : staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
+            {courtFinder === 'finding' ? 'Looking for the court lines… ' : courtFinder === 'found' ? 'We drew the court from the camera. Drag any dot that is off onto its corner, then lock it. ' : courtFinder === 'failed' ? 'We could not find the court lines. Drag the four dots onto the corners of the court. ' : lensChanged ? 'The lens changed, so the court looks different. Drag the four dots onto the corners again. ' : staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
             {venue ? `It is saved for ${venue.name}.` : ''}
           </Text>
           <Button label={recording ? 'Lock court' : 'Lock court and start recording'} onPress={lockCourt} />

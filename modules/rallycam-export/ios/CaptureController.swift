@@ -74,6 +74,8 @@ final class CaptureController: NSObject {
   private var shuttleFrame = 0
   private let shuttleModel = ShuttleModel()
   private var modelFrame = 0
+  private var stillWaiters: [(id: Int, maxWidth: Int, done: ((width: Int, height: Int, luma: Data)?) -> Void)] = []
+  private var stillCounter = 0
   private var cameraFps = 60
   private var lastShuttleEmit = 0.0
   private var shuttleLog: FileHandle?
@@ -626,6 +628,52 @@ final class CaptureController: NSObject {
     ]
   }
 
+  /// The next camera frame as a grey picture, shrunk by a whole number to about `maxWidth` pixels wide. Used to find the court lines.
+  /// Completes with nil if no frame arrives within 3 seconds.
+  func requestStill(maxWidth: Int, completion: @escaping ((width: Int, height: Int, luma: Data)?) -> Void) {
+    videoQueue.async {
+      self.stillCounter += 1
+      let id = self.stillCounter
+      self.stillWaiters.append((id: id, maxWidth: maxWidth, done: completion))
+      self.videoQueue.asyncAfter(deadline: .now() + 3) {
+        guard let i = self.stillWaiters.firstIndex(where: { $0.id == id }) else { return }
+        let waiter = self.stillWaiters.remove(at: i)
+        waiter.done(nil)
+      }
+    }
+  }
+
+  /// On the video queue, with a frame: answer everyone waiting for a still.
+  private func serveStills(_ pixelBuffer: CVPixelBuffer) {
+    guard CVPixelBufferGetPlaneCount(pixelBuffer) > 0 else { return }
+    let waiters = stillWaiters
+    stillWaiters.removeAll()
+    CVPixelBufferLockBaseAddress(pixelBuffer, .readOnly)
+    defer { CVPixelBufferUnlockBaseAddress(pixelBuffer, .readOnly) }
+    guard let base = CVPixelBufferGetBaseAddressOfPlane(pixelBuffer, 0) else { waiters.forEach { $0.done(nil) }; return }
+    let w = CVPixelBufferGetWidthOfPlane(pixelBuffer, 0)
+    let h = CVPixelBufferGetHeightOfPlane(pixelBuffer, 0)
+    let stride = CVPixelBufferGetBytesPerRowOfPlane(pixelBuffer, 0)
+    let luma = base.assumingMemoryBound(to: UInt8.self)
+    for waiter in waiters {
+      let factor = max(1, Int((Double(w) / Double(max(1, waiter.maxWidth))).rounded()))
+      let outW = w / factor, outH = h / factor
+      var out = [UInt8](repeating: 0, count: outW * outH)
+      let area = factor * factor
+      for y in 0..<outH {
+        for x in 0..<outW {
+          var sum = 0
+          for dy in 0..<factor {
+            let row = luma + (y * factor + dy) * stride + x * factor
+            for dx in 0..<factor { sum += Int(row[dx]) }
+          }
+          out[y * outW + x] = UInt8(sum / area)
+        }
+      }
+      waiter.done((width: outW, height: outH, luma: Data(out)))
+    }
+  }
+
   /// Switches the shuttle model (TrackNetV3 on the Neural Engine) on or off. See ShuttleModel.swift.
   func setShuttleModel(enabled: Bool) {
     shuttleModel.onWindow = { [weak self] frames, ms in
@@ -1112,6 +1160,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
     detectIfDue(pixelBuffer)
     shuttleIfDue(pixelBuffer, time: pts)
     shuttleModelIfDue(pixelBuffer, time: pts)
+    if !stillWaiters.isEmpty { serveStills(pixelBuffer) }
 
     if state == .armed {
       openWriter(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer), firstTime: pts)
