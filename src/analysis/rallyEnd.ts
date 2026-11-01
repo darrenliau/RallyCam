@@ -15,6 +15,8 @@ export interface RallyTrace {
   firstSeen?: FloorPoint | null;
   /** The last sighting that was on the floor, if any. */
   lastFloor?: FloorPoint | null;
+  /** Where in the picture (fractions of the frame) the shuttle was when it was first seen, which should be the serve. */
+  firstImage?: { t: number; x: number; y: number } | null;
   /** Where in the picture (fractions of the frame) the shuttle was when it was last hit. */
   hitImage?: { t: number; x: number; y: number } | null;
   /** The shuttle was moving down the picture when it was last seen, so it probably came down rather than being hidden. */

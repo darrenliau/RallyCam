@@ -30,12 +30,13 @@ import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSe
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
+import { courtOfServer, inferWinnerFromServe } from '../analysis/nextServe';
 import { ModelTrackFilter } from '../analysis/modelTrack';
 import { PlayerMotion } from '../analysis/playerMotion';
 import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
 import { addRally, editRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
-import type { MatchConfig, MatchState, Side } from '../engine/types';
+import type { Court, MatchConfig, MatchState, Side } from '../engine/types';
 import { colors } from '../theme';
 
 // Remembered between matches in this session so the user does not re-align every time.
@@ -328,7 +329,12 @@ export default function Record() {
   const [cutNote, setCutNote] = useState(false);
   // Who hit the shuttle last, from the nearest player in the picture at the moment of each hit; and how often that agrees with serve order
   const hitState = useRef<{ shots: number; side?: Side }>({ shots: 0 });
-  const hitCheck = useRef({ agree: 0, differ: 0, undecided: 0 });
+  const hitCheck = useRef({ agree: 0, differ: 0, undecided: 0, fromServe: 0, serveDisagrees: 0 });
+  // After a rally ends, who serves next shows who won it. `open`: no point has been given yet (the shuttle was lost); otherwise `winner` is the point already given.
+  const nextServe = useRef<{ open: boolean; winner?: Side; at: number } | null>(null);
+  const keepEstimatorOnce = useRef(false);
+  const inferPointRef = useRef<(side: Side, court?: Court) => void>(() => {});
+  const flagPointRef = useRef<() => void>(() => {});
   const serveRef = useRef(state.serve);
   serveRef.current = state.serve;
   const judgeCtx = useRef({ recording: false, over: false, singles: config.type === 'singles' });
@@ -413,6 +419,22 @@ export default function Record() {
       shuttleMapRef.current = onMap;
       setShuttleMap(onMap);
       const ctx = judgeCtx.current;
+      // The next serve: who serves shows who won the rally before
+      const ns = nextServe.current;
+      if (ns && !ctx.over) {
+        if (now - ns.at > 90) nextServe.current = null;
+        else {
+          const tr0 = estimator.trace();
+          if (tr0.firstImage && tr0.firstSeen && tr0.firstSeen.t > ns.at && tr0.shots >= 2) {
+            nextServe.current = null;
+            const obs = hitterSide(frameToScreen({ x: tr0.firstImage.x, y: tr0.firstImage.y }, geometry()), latest.current.tracks, mapRef.current);
+            if (obs) {
+              if (ns.open) inferPointRef.current(obs.side, courtOfServer(obs.side, obs.track.u));
+              else if (ns.winner !== obs.side) flagPointRef.current();
+            }
+          }
+        }
+      }
       // A new hit: who was nearest, in the picture
       {
         const tr = estimator.trace();
@@ -447,6 +469,7 @@ export default function Record() {
             if (!verdict) {
               // over, but nobody can say who won (the shuttle vanished in the air, or too few shots): not a point, start looking again
               hitCheck.current.undecided += 1;
+              if (trace.shots >= 2) nextServe.current = { open: true, at: now };
               estimator.newRally();
             }
           }
@@ -454,6 +477,7 @@ export default function Record() {
         if (verdict) {
           judged.current = true;
           continuing.current = false;
+          nextServe.current = { open: false, winner: verdict.winner, at: now };
           if (trace.lastSeen) pendingCall.current = { camT: now, u: trace.lastSeen.u, v: trace.lastSeen.v };
           tally.current.shown += 1;
           setSuggestion(verdict);
@@ -482,13 +506,20 @@ export default function Record() {
       };
       const t = tally.current;
       const act = motion.activity(Date.now() / 1000, 1.5);
-      setShuttleDiag(`players moving: ${act === undefined ? 'unknown' : `${act.toFixed(1)} m/s`}\nscore guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve), ${t.cutShort} cut short, ${hitCheck.current.undecided} undecided; last hitter by player vs serve order: ${hitCheck.current.agree} agree, ${hitCheck.current.differ} differ\n${modelLine()}\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+      setShuttleDiag(`players moving: ${act === undefined ? 'unknown' : `${act.toFixed(1)} m/s`}\nscore guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve), ${t.cutShort} cut short, ${hitCheck.current.undecided} undecided; last hitter by player vs serve order: ${hitCheck.current.agree} agree, ${hitCheck.current.differ} differ; points from the next serve: ${hitCheck.current.fromServe}, next serve disagreed: ${hitCheck.current.serveDisagrees}\n${modelLine()}\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shuttleOn, estimator, modelWanted, modelActive]);
 
   useEffect(() => {
+    if (keepEstimatorOnce.current) {
+      // a point was given from the next serve, which is already being tracked: do not wipe it
+      keepEstimatorOnce.current = false;
+      judged.current = false;
+      setSuggestion(null);
+      return;
+    }
     estimator.newRally();
     modelFilter.reset();
     hitState.current = { shots: 0 };
@@ -539,11 +570,36 @@ export default function Record() {
     persist(editRally(state, autoPoint.index, { winner: autoPoint.winner === 'A' ? 'B' : 'A', source: 'manual' }));
   }, [state, persist, autoPoint]);
 
+  // A rally ended with the shuttle lost, and now someone has served: they won it. The serve is already being tracked, so the point is
+  // added without resetting the estimator.
+  inferPointRef.current = (side, court) => {
+    if (!recordingStarted.current || state.matchWinner) return;
+    const expected = { A: addRally(state, { winner: 'A', source: 'auto' }).serve, B: addRally(state, { winner: 'B', source: 'auto' }).serve };
+    const r = inferWinnerFromServe(expected, { side, court });
+    const at = Date.now() - startedAt.current;
+    const next = addRally(state, { winner: r.winner, startMs: lastEnd.current, endMs: at, source: 'auto', confidence: r.confidence });
+    lastEnd.current = at;
+    keepEstimatorOnce.current = true;
+    hitCheck.current.fromServe += 1;
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    setAutoPoint({ winner: r.winner, index: next.rallies.length - 1 });
+    persist(next);
+  };
+  // The next serve is by the other side to the one that was given the last point: one of the two is wrong, so mark it for checking.
+  flagPointRef.current = () => {
+    const i = state.rallies.length - 1;
+    const last = state.rallies[i];
+    if (!last || last.source !== 'auto') return;
+    hitCheck.current.serveDisagrees += 1;
+    persist(editRally(state, i, { confidence: Math.min(0.3, last.confidence ?? 1) }));
+  };
+
   // The shuttle came back soon after a point was called: the rally was cut short. Take the point back and let it carry on.
   cutShortRef.current = () => {
     if (!autoPoint || state.rallies.length !== autoPoint.index + 1 || state.rallies[autoPoint.index].source !== 'auto') return;
     tally.current.agreed -= 1;
     tally.current.cutShort += 1;
+    nextServe.current = null;
     continuing.current = true;
     setAutoPoint(null);
     setCutNote(true);
@@ -558,6 +614,7 @@ export default function Record() {
   const onPoint = useCallback((winner: Side) => {
     if (!recordingStarted.current) return;
     pendingCall.current = null;
+    nextServe.current = null;
     continuing.current = false;
     const now = Date.now() - startedAt.current;
     const next = addRally(state, { winner, startMs: lastEnd.current, endMs: now, source: 'manual' });
@@ -566,7 +623,7 @@ export default function Record() {
     persist(next);
   }, [state, persist]);
 
-  const onUndo = () => persist(undoLast(state));
+  const onUndo = () => { nextServe.current = null; persist(undoLast(state)); };
 
   const endingRef = useRef(false);
   const endMatch = async () => {

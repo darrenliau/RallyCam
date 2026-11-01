@@ -48,6 +48,7 @@ export class ShuttleEstimator {
   private first: FloorPoint | null = null;
   private lastVel: { x: number; y: number } | null = null;
   private hitImage: { t: number; x: number; y: number } | null = null;
+  private firstImage: { t: number; x: number; y: number } | null = null;
   private lastFloor: FloorPoint | null = null;
 
   /**
@@ -68,6 +69,7 @@ export class ShuttleEstimator {
     this.first = null;
     this.lastVel = null;
     this.hitImage = null;
+    this.firstImage = null;
     this.lastFloor = null;
   }
 
@@ -84,7 +86,10 @@ export class ShuttleEstimator {
       // a new flight starts. The first one in a rally is the serve.
       if (!this.seen || this.shots === 0) {
         this.count(s.t, u, v, air, s);
-        if (!this.first) this.first = { t: s.t, u, v, ...(air ? { air } : {}) };
+        if (!this.first) {
+          this.first = { t: s.t, u, v, ...(air ? { air } : {}) };
+          this.firstImage = { t: s.t, x: s.x, y: s.y };
+        }
       }
       this.seen = true;
       this.prevVel = null;
@@ -139,7 +144,7 @@ export class ShuttleEstimator {
     return {
       shots: this.shots, lastHit: this.hit, firstSeen: this.first, descending: !!this.lastVel && this.lastVel.y > 0,
       lastSeen: l ? { t: l.t, u: l.u, v: l.v, ...(l.air ? { air: true } : {}) } : null,
-      lastFloor: this.lastFloor, hitImage: this.hitImage,
+      lastFloor: this.lastFloor, hitImage: this.hitImage, firstImage: this.firstImage,
     };
   }
 

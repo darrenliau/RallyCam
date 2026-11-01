@@ -15,8 +15,8 @@ const MAX_BODY_HEIGHTS = 2.5;
  * at the far end, who is small, is not beaten by a large player near the camera who happens to be close on screen.
  * Returns undefined when nobody is near enough.
  */
-export function hitterSide(shuttle: Pt, tracks: Track[], map: CourtMap): { side: Side; distance: number } | undefined {
-  let best: { side: Side; distance: number } | undefined;
+export function hitterSide(shuttle: Pt, tracks: Track[], map: CourtMap): { side: Side; distance: number; track: Track } | undefined {
+  let best: { side: Side; distance: number; track: Track } | undefined;
   for (const t of tracks) {
     if (t.lost) continue;
     const feet = map.toScreen(t.u, t.v);
@@ -29,7 +29,7 @@ export function hitterSide(shuttle: Pt, tracks: Track[], map: CourtMap): { side:
     const dy = shuttle.y < top ? top - shuttle.y : shuttle.y > bottom ? shuttle.y - bottom : 0;
     const dx = Math.abs(shuttle.x - feet.x);
     const distance = Math.hypot(dx, dy) / body;
-    if (!best || distance < best.distance) best = { side: t.v >= 0.5 ? 'A' : 'B', distance };
+    if (!best || distance < best.distance) best = { side: t.v >= 0.5 ? 'A' : 'B', distance, track: t };
   }
   return best && best.distance <= MAX_BODY_HEIGHTS ? best : undefined;
 }
