@@ -71,6 +71,8 @@ export interface MotionOptions {
   activityLimit: number;
   /** A track is dropped when its last `pathWindow` positions do not fit a smooth curve (see shuttlePath.ts). 0 turns the check off. */
   pathWindow: number;
+  /** A track is only reported once it has this many hits (about a tenth of a second). Shorter ones are almost always noise and would flicker on screen. */
+  reportHits: number;
 }
 
 export const DEFAULT_MOTION: MotionOptions = {
@@ -95,6 +97,7 @@ export const DEFAULT_MOTION: MotionOptions = {
   activityDecay: 0.01,
   activityLimit: 0.06,
   pathWindow: 10,
+  reportHits: 6,
 };
 
 export interface Track {
@@ -158,7 +161,7 @@ export class MotionShuttleTracker {
     this.prev = luma.slice();
     this.prevT = t;
     if (!prev || !prev2 || prev.length !== luma.length || prev2.length !== luma.length) {
-      return { candidates: [], track: this.track, activeFraction: 0, shaky: false };
+      return { candidates: [], track: this.shown(), activeFraction: 0, shaky: false };
     }
 
     const o = this.o;
@@ -195,7 +198,7 @@ export class MotionShuttleTracker {
     const activeFraction = active / (w * h);
     if (activeFraction > o.shakeFraction) {
       this.miss();
-      return { candidates: [], track: this.track, activeFraction, shaky: true };
+      return { candidates: [], track: this.shown(), activeFraction, shaky: true };
     }
 
     const found = this.blobs(cellCount, cellDiff, cw, ch, covered);
@@ -203,7 +206,7 @@ export class MotionShuttleTracker {
     const cleaned = this.dropBusy(found, w, h);
     const candidates = this.dropBackground(this.track ? found : cleaned);
     this.follow(candidates, obsT, candidates.length >= o.crowdedCount);
-    return { candidates, track: this.track, activeFraction, shaky: false };
+    return { candidates, track: this.shown(), activeFraction, shaky: false };
   }
 
   private blobs(count: Uint16Array, diff: Uint32Array, cw: number, ch: number, covered: Uint8Array): Candidate[] {
@@ -300,6 +303,11 @@ export class MotionShuttleTracker {
     this.recent.push(found);
     if (this.recent.length > o.hotFrames) this.recent.shift();
     return keep;
+  }
+
+  /** The track, once it has lasted long enough to be believed. */
+  private shown(): Track | undefined {
+    return this.track && this.track.hits >= this.o.reportHits ? this.track : undefined;
   }
 
   private miss() {

@@ -122,6 +122,7 @@ final class MotionShuttleTracker {
   private let activityDecay: Float = 0.01
   private let activityLimit: Float = 0.06
   private let pathWindow = 10
+  private let reportHits = 6   // a track is only reported once it has this many hits; shorter ones are almost always noise
 
   private var frames: [[UInt8]] = [[], [], []]   // newest, previous, the one before
   private var width = 0
@@ -169,7 +170,7 @@ final class MotionShuttleTracker {
     let obsT = prevT
     prevT = t
     haveFrames += 1
-    if haveFrames < 3 { return ShuttleResult(candidates: [], track: track, activeFraction: 0, shaky: false) }
+    if haveFrames < 3 { return ShuttleResult(candidates: [], track: shown(), activeFraction: 0, shaky: false) }
 
     let cw = (w + cellSize - 1) / cellSize
     let ch = (h + cellSize - 1) / cellSize
@@ -211,7 +212,7 @@ final class MotionShuttleTracker {
     let activeFraction = Double(active) / Double(w * h)
     if activeFraction > shakeFraction {
       miss()
-      return ShuttleResult(candidates: [], track: track, activeFraction: activeFraction, shaky: true)
+      return ShuttleResult(candidates: [], track: shown(), activeFraction: activeFraction, shaky: true)
     }
 
     let found = blobs(count: cellCount, diff: cellDiff, cw: cw, ch: ch, covered: covered)
@@ -219,7 +220,7 @@ final class MotionShuttleTracker {
     let cleaned = dropBusy(found, w: w, h: h)
     let candidates = dropBackground(track != nil ? found : cleaned)
     follow(candidates, t: obsT, crowded: candidates.count >= crowdedCount)
-    return ShuttleResult(candidates: candidates, track: track, activeFraction: activeFraction, shaky: false)
+    return ShuttleResult(candidates: candidates, track: shown(), activeFraction: activeFraction, shaky: false)
   }
 
   private func blobs(count: [UInt16], diff: [UInt32], cw: Int, ch: Int, covered: [Bool]) -> [ShuttleCandidate] {
@@ -315,6 +316,12 @@ final class MotionShuttleTracker {
     recent.append(found)
     if recent.count > hotFrames { recent.removeFirst() }
     return keep
+  }
+
+  /// The track, once it has lasted long enough to be believed.
+  private func shown() -> ShuttleTrack? {
+    if let t = track, t.hits >= reportHits { return t }
+    return nil
   }
 
   private func miss() {

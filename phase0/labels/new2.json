@@ -1,0 +1,63 @@
+{
+ "clip": "new-2.mp4 (960 wide, 60 fps, from new.mp4 seconds 15-30)",
+ "fps": 60,
+ "partial": true,
+ "note": "Seed labels from tracker tracks checked by eye on frames (a white shuttlecock at the marked spot). Only flights the tracker found; tracks outside the listed intervals are not necessarily false. Positions are in 1920x1080 pixels (the 960 wide clip scaled up).",
+ "playIntervals": [
+  [
+   0.3,
+   0.733
+  ],
+  [
+   14.717,
+   15.167
+  ]
+ ],
+ "points": [
+  {
+   "t": 0.45,
+   "x": 1116.5,
+   "y": 348.4
+  },
+  {
+   "t": 0.5,
+   "x": 1103.8,
+   "y": 339.0
+  },
+  {
+   "t": 0.55,
+   "x": 1095,
+   "y": 331.6
+  },
+  {
+   "t": 0.5833,
+   "x": 1087.7,
+   "y": 328
+  },
+  {
+   "t": 14.8667,
+   "x": 980.0,
+   "y": 464.2
+  },
+  {
+   "t": 14.9167,
+   "x": 985.4,
+   "y": 445.2
+  },
+  {
+   "t": 14.9667,
+   "x": 989.8,
+   "y": 430.5
+  },
+  {
+   "t": 15.0167,
+   "x": 994,
+   "y": 420.8
+  },
+  {
+   "t": 15.0167,
+   "x": 994,
+   "y": 420.8
+  }
+ ]
+}

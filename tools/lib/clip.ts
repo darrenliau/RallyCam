@@ -1,4 +1,4 @@
-import { spawn } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
 import { MotionShuttleTracker, type Box, type MotionOptions } from '../../src/analysis/shuttleMotion';
 import type { FrameResult } from '../../src/analysis/shuttleEval';
 
@@ -21,13 +21,21 @@ export interface ClipRow extends FrameResult {
   track?: { x: number; y: number; vx: number; vy: number; hits: number };
 }
 
+/** A smaller clip (for example the 960 wide copies) is scaled up to 1920 x 1080 first, because the tracker's sizes are in 1080p pixels. */
+function needsUpscale(file: string): boolean {
+  try {
+    const w = Number(execFileSync('ffprobe', ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=width', '-of', 'csv=p=0', file]).toString().trim());
+    return Number.isFinite(w) && w < W;
+  } catch { return false; }
+}
+
 /** Decodes a clip with ffmpeg and runs the tracker over every frame. Positions come back in pixels of the full 1920 x 1080 frame. */
 export function runClip(file: string, y0 = 300, options: Partial<MotionOptions> = {}, fps = 60): Promise<ClipRow[]> {
   const h = H - y0;
   const tracker = new MotionShuttleTracker(options);
   const cards = overlayCards(y0);
   return new Promise((resolve, reject) => {
-    const ff = spawn('ffmpeg', ['-v', 'error', '-i', file, '-vf', `crop=${W}:${h}:0:${y0},format=gray`, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { stdio: ['ignore', 'pipe', 'inherit'] });
+    const ff = spawn('ffmpeg', ['-v', 'error', '-i', file, '-vf', `${needsUpscale(file) ? `scale=${W}:${H}:flags=bicubic,` : ''}crop=${W}:${h}:0:${y0},format=gray`, '-f', 'rawvideo', '-pix_fmt', 'gray', '-'], { stdio: ['ignore', 'pipe', 'inherit'] });
     const frameBytes = W * h;
     const rows: ClipRow[] = [];
     let buf = Buffer.alloc(0);
