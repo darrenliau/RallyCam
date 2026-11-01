@@ -18,7 +18,7 @@ import { CourtAligner } from '../components/CourtAligner';
 import { MatchOverlay } from '../components/MatchOverlay';
 import type { TagInfo } from '../components/PlayerOverlay';
 import { RecorderView, isExpoGo, usesNativeCapture } from '../camera/RecorderView';
-import { Capture } from '../../modules/rallycam-export/src/capture';
+import { Capture, type ShuttleModelStatus } from '../../modules/rallycam-export/src/capture';
 import type { RecorderHandle } from '../camera/types';
 import { Button } from '../components/ui';
 import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo, setProvisionalVideo } from '../db/matches';
@@ -28,6 +28,7 @@ import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
+import { ModelTrackFilter } from '../analysis/modelTrack';
 import { PlayerMotion } from '../analysis/playerMotion';
 import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
 import { addRally, editRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
@@ -299,6 +300,13 @@ export default function Record() {
     }),
     [],
   );
+  // The trained shuttle model (TrackNetV3), when switched on in Settings and present in the build. While it is loading or if it
+  // cannot be used, the simple tracker keeps running.
+  const modelWanted = shuttleOn && settings.shuttleModel;
+  const [modelStatus, setModelStatus] = useState<ShuttleModelStatus | null>(null);
+  const modelActive = modelWanted && modelStatus?.state === 'ready';
+  const modelFilter = useRef(new ModelTrackFilter()).current;
+  const modelMs = useRef(0);
   const lastShuttleT = useRef(0);
   const trailFrame = useRef<{ x: number; y: number }[]>([]);
   const [trail, setTrail] = useState<{ x: number; y: number }[]>([]);
@@ -360,12 +368,29 @@ export default function Record() {
 
   useEffect(() => {
     const native = Capture;
-    if (!native || !shuttleOn || aligning) return;
+    if (!native || !shuttleOn || aligning || modelActive) return;
     const r = shuttleRoiFromCorners(corners, geometry());
     native.setShuttle(true, r.x, r.y, r.w, r.h);
     return () => native.setShuttle(false, 0, 0, 0, 0);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shuttleOn, aligning, corners, width, height]);
+  }, [shuttleOn, aligning, corners, width, height, modelActive]);
+
+  // The shuttle model: switch it on, watch whether it loaded, and pass its sightings through the filter to the estimator
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !modelWanted) { setModelStatus(null); return; }
+    native.setShuttleModel(true);
+    const poll = () => setModelStatus(native.getShuttleModelStatus());
+    poll();
+    const id = setInterval(poll, 500);
+    const sub = native.addListener('onShuttleModel', (e) => {
+      if (!e.frames.length) return;
+      lastShuttleT.current = e.frames[e.frames.length - 1].t;
+      modelMs.current = e.predictMs;
+      for (const sample of modelFilter.push(e.frames)) estimator.push(sample);
+    });
+    return () => { sub.remove(); clearInterval(id); native.setShuttleModel(false); modelFilter.reset(); setModelStatus(null); };
+  }, [modelWanted, modelFilter, estimator]);
 
   useEffect(() => {
     const native = Capture;
@@ -427,19 +452,25 @@ export default function Record() {
       trailFrame.current = frames;
       setTrail(frames.map((p) => frameToScreen(p, geometry())));
       const st = native.getShuttleStatus();
+      const modelLine = () => {
+        if (!modelWanted) return 'shuttle model: off';
+        const m = native.getShuttleModelStatus();
+        return `shuttle model: ${m.state}${m.problem ? ` (${m.problem})` : ''}, ${m.predictMs.toFixed(0)} ms a window, ${m.detections} sightings, ${m.windows} windows, ${m.windowsDropped} dropped, ${m.framesDropped} frames dropped${modelActive ? ', simple tracker off' : ', simple tracker running'}`;
+      };
       const t = tally.current;
       const act = motion.activity(Date.now() / 1000, 1.5);
-      setShuttleDiag(`players moving: ${act === undefined ? 'unknown' : `${act.toFixed(1)} m/s`}\nscore guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve), ${t.cutShort} cut short\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+      setShuttleDiag(`players moving: ${act === undefined ? 'unknown' : `${act.toFixed(1)} m/s`}\nscore guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve), ${t.cutShort} cut short\n${modelLine()}\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shuttleOn, estimator]);
+  }, [shuttleOn, estimator, modelWanted, modelActive]);
 
   useEffect(() => {
     estimator.newRally();
+    modelFilter.reset();
     judged.current = false;
     setSuggestion(null);
-  }, [state.rallies.length, estimator]);
+  }, [state.rallies.length, estimator, modelFilter]);
   // The point just given automatically, shown briefly so it can be swapped. It is also flagged for review afterwards when unsure.
   const [autoPoint, setAutoPoint] = useState<{ winner: Side; index: number } | null>(null);
   useEffect(() => {

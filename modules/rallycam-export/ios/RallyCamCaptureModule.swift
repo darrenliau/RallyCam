@@ -38,7 +38,7 @@ public class RallyCamCaptureModule: Module {
   public func definition() -> ModuleDefinition {
     Name("RallyCamCapture")
 
-    Events("onDetections", "onError", "onInterruption", "onPressure", "onShuttle")
+    Events("onDetections", "onError", "onInterruption", "onPressure", "onShuttle", "onShuttleModel")
 
     OnCreate {
       let controller = CaptureController.shared
@@ -53,6 +53,9 @@ public class RallyCamCaptureModule: Module {
       }
       controller.onShuttle = { [weak self] payload in
         DispatchQueue.main.async { self?.sendEvent("onShuttle", payload) }
+      }
+      controller.onShuttleModel = { [weak self] payload in
+        DispatchQueue.main.async { self?.sendEvent("onShuttleModel", payload) }
       }
       controller.onPressure = { [weak self] level in
         DispatchQueue.main.async { self?.sendEvent("onPressure", ["level": level]) }
@@ -123,6 +126,16 @@ public class RallyCamCaptureModule: Module {
     // Experimental shuttle tracking. The area is as fractions of the frame. enabled false turns it off.
     Function("setShuttle") { (enabled: Bool, x: Double, y: Double, w: Double, h: Double) in
       CaptureController.shared.setShuttle(roi: enabled ? CGRect(x: x, y: y, width: w, height: h) : nil)
+    }
+
+    // The shuttle model (TrackNetV3 on the Neural Engine). It reports positions with the onShuttleModel event, 8 frames at a time.
+    Function("setShuttleModel") { (enabled: Bool) in
+      CaptureController.shared.setShuttleModel(enabled: enabled)
+    }
+
+    // { state: off | loading | ready | missing | failed, problem, framesSeen, framesDropped, windows, windowsDropped, detections, predictMs }
+    Function("getShuttleModelStatus") { () -> [String: Any] in
+      CaptureController.shared.shuttleModelStatus()
     }
 
     Function("startShuttleLog") { (uri: String) in

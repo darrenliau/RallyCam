@@ -72,12 +72,17 @@ final class CaptureController: NSObject {
   private var shuttleROI: CGRect?          // fractions of the frame, top left origin
   private var shuttleBusy = false
   private var shuttleFrame = 0
+  private let shuttleModel = ShuttleModel()
+  private var modelFrame = 0
+  private var cameraFps = 60
   private var lastShuttleEmit = 0.0
   private var shuttleLog: FileHandle?
   private var shuttleLogBuffer = ""
   private var lastLogFlush = 0.0
   private var shuttleStats = (frames: 0, withCandidates: 0, confirmed: 0, shaky: 0, lastCandidates: 0)
   var onShuttle: (([String: Any]) -> Void)?
+  /// Frames of the shuttle model (see ShuttleModel.swift): { frames: [{ t, x?, y? }], predictMs }
+  var onShuttleModel: (([String: Any]) -> Void)?
 
   // Detection
   private let detectLock = NSLock()
@@ -227,6 +232,7 @@ final class CaptureController: NSObject {
   private func configureAndRun(targetFps: Int, lens wanted: String) throws -> CaptureInfo {
     NSLog("RallyCam: starting the camera, wanted \(targetFps) fps, lens \(wanted)")
     let fps = try configure(targetFps: targetFps, lens: wanted)
+    cameraFps = fps
     frameWidth = 1920
     frameHeight = 1080
     observeSession()
@@ -618,6 +624,30 @@ final class CaptureController: NSObject {
       "shuttleShaky": shuttleStats.shaky,
       "shuttleLastCandidates": shuttleStats.lastCandidates,
     ]
+  }
+
+  /// Switches the shuttle model (TrackNetV3 on the Neural Engine) on or off. See ShuttleModel.swift.
+  func setShuttleModel(enabled: Bool) {
+    shuttleModel.onWindow = { [weak self] frames, ms in
+      guard let self, let callback = self.onShuttleModel else { return }
+      let list: [[String: Any]] = frames.map { f in
+        var d: [String: Any] = ["t": f.t]
+        if let x = f.x, let y = f.y { d["x"] = x; d["y"] = y }
+        return d
+      }
+      callback(["frames": list, "predictMs": ms])
+    }
+    shuttleModel.setEnabled(enabled)
+  }
+
+  func shuttleModelStatus() -> [String: Any] { shuttleModel.status() }
+
+  /// Offers the model about 60 frames a second, which is what it was shown in testing: every second frame of a 120 fps camera.
+  private func shuttleModelIfDue(_ pixelBuffer: CVPixelBuffer, time: CMTime) {
+    modelFrame += 1
+    let every = cameraFps >= 100 ? 2 : 1
+    guard modelFrame % every == 0 else { return }
+    shuttleModel.push(pixelBuffer, time: CMTimeGetSeconds(time))
   }
 
   /// Runs the shuttle tracker on about every second camera frame, off the camera's own queue.
@@ -1081,6 +1111,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
 
     detectIfDue(pixelBuffer)
     shuttleIfDue(pixelBuffer, time: pts)
+    shuttleModelIfDue(pixelBuffer, time: pts)
 
     if state == .armed {
       openWriter(width: CVPixelBufferGetWidth(pixelBuffer), height: CVPixelBufferGetHeight(pixelBuffer), firstTime: pts)

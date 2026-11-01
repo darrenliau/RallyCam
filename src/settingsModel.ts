@@ -35,18 +35,20 @@ export interface Settings {
   guideSeen: boolean;
   /** Try to follow the shuttle with the camera (experimental, iPhone only). */
   experimentalShuttle: boolean;
+  /** Use the trained shuttle model (TrackNetV3 on the Neural Engine) instead of the simple tracker, when the build has it. */
+  shuttleModel: boolean;
   /** Also keep a clean, smaller copy of each game with no overlay, for analysing the shuttle afterwards (iPhone only). */
   keepAnalysisCopy: boolean;
   /** The lens last used, so the saved court lines still fit next time. */
   lens: Lens;
 }
 
-export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, keepAnalysisCopy: false, lens: 'auto' };
+export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, shuttleModel: false, keepAnalysisCopy: false, lens: 'auto' };
 
 /** Reads one stored value back into the right type, ignoring anything unexpected. */
 export function parseSetting<K extends keyof Settings>(key: K, raw: string): Settings[K] | undefined {
   if (key === 'quality') return (raw in QUALITY ? raw : undefined) as Settings[K] | undefined;
-  if (key === 'guideSeen' || key === 'experimentalShuttle' || key === 'keepAnalysisCopy') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
+  if (key === 'guideSeen' || key === 'experimentalShuttle' || key === 'shuttleModel' || key === 'keepAnalysisCopy') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
   if (key === 'lens') return ((LENSES as string[]).includes(raw) ? raw : undefined) as Settings[K] | undefined;
   return undefined;
 }

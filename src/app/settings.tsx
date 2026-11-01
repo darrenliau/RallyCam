@@ -57,6 +57,17 @@ export default function Settings() {
             </View>
             <Switch value={settings.experimentalShuttle} onValueChange={(v) => updateSettings({ experimentalShuttle: v })} accessibilityLabel="Experimental shuttle tracking" />
           </View>
+          {EXPERIMENTS && (
+            <View style={s.row}>
+              <View style={{ flex: 1 }}>
+                <Label>Shuttle model · experimental</Label>
+                <Text style={s.muted}>
+                  Uses the trained TrackNetV3 model on the Neural Engine instead of the simple tracker. It needs the model file in the build (see ios/Models/README.md) and Shuttle tracking above to be on. If the file is missing, the simple tracker is used and the debug panel says so.
+                </Text>
+              </View>
+              <Switch value={settings.shuttleModel} onValueChange={(v) => updateSettings({ shuttleModel: v })} accessibilityLabel="Shuttle model" />
+            </View>
+          )}
         </Card>
       )}
 

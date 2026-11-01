@@ -18,12 +18,32 @@ export interface ShuttleEvent {
   tTrack?: number;
 }
 
+/** What the shuttle model saw in a window of 8 frames in a row: positions are fractions of the camera frame, missing when nothing was seen. */
+export interface ShuttleModelEvent {
+  frames: { t: number; x?: number; y?: number }[];
+  predictMs: number;
+}
+
+export interface ShuttleModelStatus {
+  /** missing: the model file is not in this build. failed: it could not be loaded or run (see problem). */
+  state: 'off' | 'loading' | 'ready' | 'missing' | 'failed';
+  problem: string;
+  enabled: boolean;
+  framesSeen: number;
+  framesDropped: number;
+  windows: number;
+  windowsDropped: number;
+  detections: number;
+  predictMs: number;
+}
+
 type Events = {
   onDetections: (e: { boxes: CaptureBox[] }) => void;
   onError: (e: { message: string }) => void;
   onInterruption: (e: { interrupted: boolean; reason: string }) => void;
   onPressure: (e: { level: string }) => void;
   onShuttle: (e: ShuttleEvent) => void;
+  onShuttleModel: (e: ShuttleModelEvent) => void;
 };
 
 declare class RallyCamCaptureModule extends NativeModule<Events> {
@@ -39,6 +59,9 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   getStatus(): { overlayPushes: number; overlayDecoded: number; overlayFailed: number; framesWritten: number; framesWithOverlay: number; lastProblem: string; lens: string; running: boolean; framesIn: number; luma: number; audioBuffers: number; audioLevel: number; audioInFile: boolean; device: string; exposureMs: number; iso: number; interrupted: boolean };
   setDetection(enabled: boolean, x: number, y: number, w: number, h: number): void;
   setShuttle(enabled: boolean, x: number, y: number, w: number, h: number): void;
+  /** TrackNetV3 on the Neural Engine. Needs the model file in the build (ios/Models/README.md). Positions arrive with onShuttleModel. */
+  setShuttleModel(enabled: boolean): void;
+  getShuttleModelStatus(): ShuttleModelStatus;
   startShuttleLog(uri: string): void;
   stopShuttleLog(): void;
   getShuttleStatus(): { shuttleFrames: number; shuttleWithCandidates: number; shuttleConfirmed: number; shuttleShaky: number; shuttleLastCandidates: number };

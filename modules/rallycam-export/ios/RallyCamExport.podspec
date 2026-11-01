@@ -20,4 +20,6 @@ Pod::Spec.new do |s|
   }
 
   s.source_files = "**/*.{h,m,mm,swift,hpp,cpp}"
+  # The shuttle model, if it has been added to Models/ (see Models/README.md), is packed in a resource bundle and found at run time
+  s.resource_bundles = { 'RallyCamModels' => ['Models/*'] }
 end
