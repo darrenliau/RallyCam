@@ -254,6 +254,6 @@ How it works (`src/analysis/courtLines.ts`, all plain TypeScript, with tests): t
 
 Tried on 12 frames of the wide-hall recording (low camera, players on the lines): the court lines drawn follow the white lines closely in 11, with one weaker. On a frame from a camera right beside the net it returns nothing, and on another it returns a small quad that is probably wrong, so the picture must be checked each time. `tools/find-court.ts frame.png [--at seconds] [--cards] [--expect corners.json]` runs it on a picture or a video frame. About a quarter of a second per picture on a computer; on a phone's JavaScript engine it will be slower, which is not measured.
 
-### Showing the test features in a release build
+### Test features in every build
 
-The debug panel and the "Shuttle model" and "Keep a clean copy" switches show in development builds and in builds made with `EXPO_PUBLIC_EXPERIMENTS=1` (the `testflight` profile in `eas.json` sets it). For a build made from Xcode in Release mode, put `EXPO_PUBLIC_EXPERIMENTS=1` in a `.env` file in the project root (see `.env.example`; `.env` is ignored by git), then clean the build folder and build again. The simple "Shuttle tracking" switch is always shown.
+The debug panel, the "Shuttle model" and "Keep a clean copy" switches, simulated players and the shuttle cards show in **every** build, development, release and TestFlight. Only a store build leaves them out: it is made with `EXPO_PUBLIC_STORE_BUILD=1`, which the `production` profile in `eas.json` sets (the `testflight` profile sets it to 0). See `src/config.ts`. Before submitting to the App Store, build with `eas build --profile production` and check Settings and the Record screen show none of them.

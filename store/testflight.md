@@ -14,7 +14,7 @@ git pull
 eas build --profile testflight --platform ios
 eas submit --profile testflight --platform ios
 ```
-The `testflight` profile (see `eas.json`) is the production build plus `EXPO_PUBLIC_EXPERIMENTS=1`, which turns on:
+The `testflight` profile (see `eas.json`) is the production build with `EXPO_PUBLIC_STORE_BUILD=0`, which turns on:
 - the debug panel and "Simulate players" on the Record screen,
 - shuttle speed and shot cards even when empty,
 - the experimental shuttle tracker switch (Settings, off until a tester turns it on) with automatic scoring,
