@@ -136,3 +136,36 @@ describe('a rally cut short', () => {
     expect(isContinuation(landing, { u: 0.5, v: 0.9 }, 1, false)).toBe(false);
   });
 });
+
+describe('a shuttle that may be in the air', () => {
+  const base = { shots: 4, lastHit: P(1, 0.5, 0.8), descending: true };
+
+  it('is not called when the shuttle vanished in the air and no floor sighting was just before', () => {
+    const trace = { ...base, lastSeen: { ...P(2, 0.5, 1.49), air: true }, lastFloor: P(0.5, 0.5, 0.8) };
+    expect(judgeRally(trace, 2 + GONE_MAX_S + 0.1, false)).toBeNull();
+  });
+  it('uses the last floor sighting just before, with less confidence', () => {
+    const direct = judgeRally({ ...base, lastSeen: P(2, 0.5, 0.25) }, 2 + GONE_S + 0.1, false)!;
+    const indirect = judgeRally({ ...base, lastSeen: { ...P(2, 0.5, 1.49), air: true }, lastFloor: P(1.5, 0.5, 0.25) }, 2 + GONE_S + 0.1, false)!;
+    expect(indirect.winner).toBe(direct.winner);
+    expect(indirect.confidence).toBeLessThan(direct.confidence);
+  });
+  it('does not take the quick landing call for a shuttle last seen in the air', () => {
+    const trace = { ...base, lastSeen: { ...P(2, 0.5, 0.25), air: true } };
+    expect(isRallyOver(trace, 2 + LANDED_S + 0.05, false)).toBe(false);
+    expect(isRallyOver(trace, 2 + GONE_S + 0.1, false)).toBe(true);
+  });
+  it('is not called when nothing says who hit it last: the hit was in the air and no player was named', () => {
+    const trace = { ...base, lastHit: { ...P(1, 0.5, 0.8), air: true }, lastSeen: P(2, 0.5, 0.25) };
+    expect(judgeRally(trace, 2 + GONE_S + 0.1, false)).toBeNull();
+  });
+  it('takes the hitter from the caller when it is named', () => {
+    const trace = { ...base, lastHit: { ...P(1, 0.5, 0.8), air: true }, lastSeen: P(2, 0.5, 0.25) };
+    expect(judgeRally(trace, 2 + GONE_S + 0.1, false, undefined, 'A')).toMatchObject({ winner: 'A' }); // A hit it into B's court, in
+    expect(judgeRally(trace, 2 + GONE_S + 0.1, false, undefined, 'B')).toMatchObject({ winner: 'A' }); // B hit it onto B's own side: A wins
+  });
+  it('cannot check where a serve began if its first sighting was in the air', () => {
+    const t = { shots: 3, lastHit: null, lastSeen: P(3, 0.5, 0.2), firstSeen: { ...P(1, 0.1, 1.4), air: true } };
+    expect(serveProblem(t, { side: 'A', court: 'right' })).toBeNull();
+  });
+});

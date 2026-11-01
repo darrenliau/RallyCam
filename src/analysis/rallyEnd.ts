@@ -1,7 +1,8 @@
 import { COURT_L, COURT_W } from './court';
 import type { Court, Side } from '../engine/types';
 
-export interface FloorPoint { t: number; u: number; v: number }
+/** A place on the court floor. `air` means the shuttle might have been above the floor there, so u and v mean nothing. */
+export interface FloorPoint { t: number; u: number; v: number; air?: boolean }
 
 /** What the shuttle did in a rally, as far as the estimator saw it. */
 export interface RallyTrace {
@@ -12,6 +13,10 @@ export interface RallyTrace {
   lastSeen: FloorPoint | null;
   /** Where the shuttle was first seen in this rally, which should be the serve. */
   firstSeen?: FloorPoint | null;
+  /** The last sighting that was on the floor, if any. */
+  lastFloor?: FloorPoint | null;
+  /** Where in the picture (fractions of the frame) the shuttle was when it was last hit. */
+  hitImage?: { t: number; x: number; y: number } | null;
   /** The shuttle was moving down the picture when it was last seen, so it probably came down rather than being hidden. */
   descending?: boolean;
 }
@@ -37,6 +42,8 @@ export const GONE_S = 1.6;
 export const LANDED_S = 0.6;
 /** If the players are still running, the shuttle was probably just lost by the camera: wait up to this long before giving up. */
 export const GONE_MAX_S = 4;
+/** A floor sighting this close (seconds) before the shuttle was lost can stand in for where it came down. */
+const INDIRECT_S = 0.8;
 /** After a point is called, a shuttle seen again this soon, near where it came down, means the rally was cut short. */
 export const CONTINUE_S = 2.5;
 /** ...and within this distance of the landing (metres on the floor map). */
@@ -57,23 +64,35 @@ const other = (s: Side): Side => (s === 'A' ? 'B' : 'A');
  * The player who made the last hit wins only if the shuttle crossed the net and came down inside the court. Otherwise
  * (into the net, or out) the last hitter loses. Returns null until the shuttle has been gone for GONE_S.
  */
-export function judgeRally(trace: RallyTrace, now: number, singles: boolean, calm?: boolean): Verdict | null {
-  const { lastHit, lastSeen } = trace;
-  if (!lastHit || !lastSeen || trace.shots < MIN_SHOTS) return null;
+export function judgeRally(trace: RallyTrace, now: number, singles: boolean, calm?: boolean, hitterSide?: Side): Verdict | null {
+  const { lastSeen } = trace;
+  if (!lastSeen || trace.shots < MIN_SHOTS) return null;
   if (!isRallyOver(trace, now, singles, calm)) return null;
 
-  const hitter = sideOf(lastHit.v);
-  const lands = sideOf(lastSeen.v);
-  const { inBounds, outside } = landingCall(lastSeen, singles);
+  // Who hit it last: the side of the nearest player at that moment when the caller knows it, otherwise the side of the floor
+  // position of the hit, which is only meaningful when the shuttle was low enough to be on the floor map.
+  const hitter = hitterSide ?? (trace.lastHit && !trace.lastHit.air ? sideOf(trace.lastHit.v) : undefined);
+  if (!hitter) return null;
+  // Where it came down: the last sighting if that was on the floor, else the last floor sighting just before it. A shuttle that
+  // vanished high in the air has not come down anywhere we saw, and no point is called.
+  let landing: FloorPoint | undefined = lastSeen.air ? undefined : lastSeen;
+  const indirect = !landing;
+  if (!landing && trace.lastFloor && lastSeen.t - trace.lastFloor.t <= INDIRECT_S) landing = trace.lastFloor;
+  if (!landing) return null;
+
+  const lands = sideOf(landing.v);
+  const { inBounds, outside } = landingCall(landing, singles);
   const nearLine = Math.abs(outside) < UNSURE_M;
   const crossed = lands !== hitter;
-  const nearNet = Math.abs(lastSeen.v - 0.5) * COURT_L < UNSURE_M;
+  const nearNet = Math.abs(landing.v - 0.5) * COURT_L < UNSURE_M;
 
   const hitterWins = crossed && inBounds;
   let confidence = 0.8;
   if (nearLine) confidence -= 0.35;
   if (nearNet) confidence -= 0.25;
   if (trace.shots < 3) confidence -= 0.1;
+  if (indirect) confidence -= 0.2;
+  if (!hitterSide) confidence -= 0.1;
   // Players stopping after the shuttle came down is what a finished rally looks like
   if (calm === true) confidence += 0.1;
   if (calm === false) confidence -= 0.2;
@@ -114,7 +133,8 @@ export function isRallyOver(trace: RallyTrace, now: number, singles = false, cal
   // Players keep running while a rally is on and stop once the shuttle has landed. Still moving means wait.
   if (calm === false) return false;
   if (gone >= GONE_S) return true;
-  return gone >= LANDED_S && trace.descending === true && trace.shots >= MIN_SHOTS && clearLanding(seen, singles);
+  // a shuttle last seen in the air has not come down anywhere we can see, so it only gets the long wait
+  return gone >= LANDED_S && !seen.air && trace.descending === true && trace.shots >= MIN_SHOTS && clearLanding(seen, singles);
 }
 
 /**
@@ -136,6 +156,7 @@ export function isContinuation(landing: { u: number; v: number }, appearedAt: { 
 export function serveProblem(trace: RallyTrace, serve: ServeExpectation): string | null {
   const first = trace.firstSeen;
   if (!first) return 'no start seen';
+  if (first.air) return null; // a serve is hit above the floor: its floor position says nothing, so the start cannot be checked
   if (sideOf(first.v) !== serve.side) return 'started on the wrong side';
   // A near-side server (A) faces away from the camera, so their right is the camera's right. For the far side it is the other way round.
   const right = serve.side === 'A' ? first.u > 0.5 - HALF_SLACK : first.u < 0.5 + HALF_SLACK;

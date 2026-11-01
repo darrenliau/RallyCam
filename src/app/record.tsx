@@ -28,6 +28,8 @@ import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
+import { floorPosition } from '../analysis/court';
+import { hitterSide } from '../analysis/hitter';
 import { ModelTrackFilter } from '../analysis/modelTrack';
 import { PlayerMotion } from '../analysis/playerMotion';
 import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
@@ -294,9 +296,8 @@ export default function Record() {
   const geometry = () => ({ frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height });
   const estimator = useMemo(
     () => new ShuttleEstimator((x, y) => {
-      // The shuttle is in the air, so this is only a rough floor position (see ShuttleEstimator)
-      const c = mapRef.current.toCourt(frameToScreen({ x, y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }));
-      return { u: c.u, v: c.v };
+      // Only a shuttle on the floor has a floor position. Above the court's horizon, or off its ends, `air` is set and the position is not used.
+      return floorPosition(mapRef.current, frameToScreen({ x, y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }));
     }),
     [],
   );
@@ -325,6 +326,9 @@ export default function Record() {
   const continuing = useRef(false);
   const cutShortRef = useRef<() => void>(() => {});
   const [cutNote, setCutNote] = useState(false);
+  // Who hit the shuttle last, from the nearest player in the picture at the moment of each hit; and how often that agrees with serve order
+  const hitState = useRef<{ shots: number; side?: Side }>({ shots: 0 });
+  const hitCheck = useRef({ agree: 0, differ: 0, undecided: 0 });
   const serveRef = useRef(state.serve);
   serveRef.current = state.serve;
   const judgeCtx = useRef({ recording: false, over: false, singles: config.type === 'singles' });
@@ -409,6 +413,15 @@ export default function Record() {
       shuttleMapRef.current = onMap;
       setShuttleMap(onMap);
       const ctx = judgeCtx.current;
+      // A new hit: who was nearest, in the picture
+      {
+        const tr = estimator.trace();
+        if (tr.shots > hitState.current.shots) {
+          hitState.current.shots = tr.shots;
+          const at = tr.hitImage;
+          hitState.current.side = at ? hitterSide(frameToScreen({ x: at.x, y: at.y }, geometry()), latest.current.tracks, mapRef.current)?.side : undefined;
+        }
+      }
       if (ctx.recording && !ctx.over && !judged.current) {
         const trace = estimator.trace();
         let verdict: Verdict | null = null;
@@ -425,7 +438,17 @@ export default function Record() {
             tally.current.notServe += 1;
             estimator.newRally();
           } else {
-            verdict = judgeRally(trace, now, ctx.singles, calm);
+            // Serve order is the other way to know who hit last: sides take turns, starting with the server
+            const sv2 = serveRef.current;
+            const byParity: Side = trace.shots % 2 === 1 ? sv2.side : sv2.side === 'A' ? 'B' : 'A';
+            const named = hitState.current.side;
+            if (named) { if (named === byParity) hitCheck.current.agree += 1; else hitCheck.current.differ += 1; }
+            verdict = judgeRally(trace, now, ctx.singles, calm, named ?? byParity);
+            if (!verdict) {
+              // over, but nobody can say who won (the shuttle vanished in the air, or too few shots): not a point, start looking again
+              hitCheck.current.undecided += 1;
+              estimator.newRally();
+            }
           }
         }
         if (verdict) {
@@ -459,7 +482,7 @@ export default function Record() {
       };
       const t = tally.current;
       const act = motion.activity(Date.now() / 1000, 1.5);
-      setShuttleDiag(`players moving: ${act === undefined ? 'unknown' : `${act.toFixed(1)} m/s`}\nscore guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve), ${t.cutShort} cut short\n${modelLine()}\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
+      setShuttleDiag(`players moving: ${act === undefined ? 'unknown' : `${act.toFixed(1)} m/s`}\nscore guesses: ${t.shown} given, ${t.flipped} swapped by you, ${t.notServe} ignored (no serve), ${t.cutShort} cut short, ${hitCheck.current.undecided} undecided; last hitter by player vs serve order: ${hitCheck.current.agree} agree, ${hitCheck.current.differ} differ\n${modelLine()}\nshuttle: ${st.shuttleFrames} frames, candidates ${st.shuttleLastCandidates}, with candidates ${st.shuttleWithCandidates}, tracked ${st.shuttleConfirmed}, shaky ${st.shuttleShaky}`);
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -468,6 +491,7 @@ export default function Record() {
   useEffect(() => {
     estimator.newRally();
     modelFilter.reset();
+    hitState.current = { shots: 0 };
     judged.current = false;
     setSuggestion(null);
   }, [state.rallies.length, estimator, modelFilter]);

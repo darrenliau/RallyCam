@@ -35,7 +35,7 @@ const MIN_HIT_GAP_S = 0.25;
  * A shot is counted when the shuttle turns around (its direction on screen reverses), and for the first appearance of a rally.
  */
 export class ShuttleEstimator {
-  private last: (ShuttleSample & { u: number; v: number }) | null = null;
+  private last: (ShuttleSample & { u: number; v: number; air: boolean }) | null = null;
   private prevVel: { x: number; y: number } | null = null;
   private lastHitT = -Infinity;
   private shots = 0;
@@ -47,9 +47,14 @@ export class ShuttleEstimator {
   private hit: FloorPoint | null = null;
   private first: FloorPoint | null = null;
   private lastVel: { x: number; y: number } | null = null;
+  private hitImage: { t: number; x: number; y: number } | null = null;
+  private lastFloor: FloorPoint | null = null;
 
-  /** `toFloor` maps a frame position to court coordinates (0..1 across and along the court). */
-  constructor(private toFloor: (x: number, y: number) => { u: number; v: number }) {}
+  /**
+   * `toFloor` maps a frame position to court coordinates (0..1 across and along the court). It sets `air` when the point cannot be
+   * on the floor (see floorPosition in court.ts): the position is then meaningless and is not used to decide anything.
+   */
+  constructor(private toFloor: (x: number, y: number) => { u: number; v: number; air?: boolean }) {}
 
   newRally() {
     this.shots = 0;
@@ -62,11 +67,14 @@ export class ShuttleEstimator {
     this.hit = null;
     this.first = null;
     this.lastVel = null;
+    this.hitImage = null;
+    this.lastFloor = null;
   }
 
   push(s: ShuttleSample) {
-    const { u, v } = this.toFloor(s.x, s.y);
-    if (u < -OUTSIDE_U || u > 1 + OUTSIDE_U || v < -OUTSIDE_V || v > 1 + OUTSIDE_V) return;
+    const { u, v, air = false } = this.toFloor(s.x, s.y);
+    // a point that is on the floor and well outside the court is the next court's, a point that may be in the air is not judged by where it falls
+    if (!air && (u < -OUTSIDE_U || u > 1 + OUTSIDE_U || v < -OUTSIDE_V || v > 1 + OUTSIDE_V)) return;
     this.recent.push(s);
     while (this.recent.length && s.t - this.recent[0].t > 1) this.recent.shift();
     const last = this.last;
@@ -75,18 +83,20 @@ export class ShuttleEstimator {
     if (!last || gap > GONE_AFTER_S) {
       // a new flight starts. The first one in a rally is the serve.
       if (!this.seen || this.shots === 0) {
-        this.count(s.t, u, v);
-        if (!this.first) this.first = { t: s.t, u, v };
+        this.count(s.t, u, v, air, s);
+        if (!this.first) this.first = { t: s.t, u, v, ...(air ? { air } : {}) };
       }
       this.seen = true;
       this.prevVel = null;
-      this.last = { ...s, u, v };
+      this.last = { ...s, u, v, air };
+      if (!air) this.lastFloor = { t: s.t, u, v };
       return;
     }
     if (gap < 0.006) return; // two samples for the same moment
 
     const vel = { x: (s.x - last.x) / gap, y: (s.y - last.y) / gap };
-    const metres = Math.hypot((u - last.u) * COURT_W, (v - last.v) * COURT_L);
+    // speed needs two floor positions: in the air they mean nothing
+    const metres = air || last.air ? NaN : Math.hypot((u - last.u) * COURT_W, (v - last.v) * COURT_L);
     const ms = metres / gap;
     if (ms <= MAX_SPEED_MS) {
       this.smoothMs = this.smoothMs ? 0.5 * this.smoothMs + 0.5 * ms : ms;
@@ -95,7 +105,8 @@ export class ShuttleEstimator {
 
     // A shuttle that is hardly moving (the very top of its flight) has no reliable direction: keep the last good one.
     if (Math.hypot(vel.x, vel.y) < 0.02) {
-      this.last = { ...s, u, v };
+      this.last = { ...s, u, v, air };
+      if (!air) this.lastFloor = { t: s.t, u, v };
       return;
     }
 
@@ -106,24 +117,30 @@ export class ShuttleEstimator {
       if (norm > 0 && dot / norm < -0.2 && s.t - this.lastHitT >= MIN_HIT_GAP_S) {
         this.lastShotKmh = this.peakKmh;
         this.peakKmh = 0;
-        this.count(s.t, last.u, last.v);
+        this.count(s.t, last.u, last.v, last.air, last);
       }
     }
     this.prevVel = vel;
     this.lastVel = vel;
-    this.last = { ...s, u, v };
+    this.last = { ...s, u, v, air };
+    if (!air) this.lastFloor = { t: s.t, u, v };
   }
 
-  private count(t: number, u: number, v: number) {
+  private count(t: number, u: number, v: number, air: boolean, at: { x: number; y: number }) {
     this.shots += 1;
     this.lastHitT = t;
-    this.hit = { t, u, v };
+    this.hit = { t, u, v, ...(air ? { air } : {}) };
+    this.hitImage = { t, x: at.x, y: at.y };
   }
 
   /** What happened so far in this rally, for deciding who won it (see rallyEnd.ts). */
   trace(): RallyTrace {
     const l = this.last;
-    return { shots: this.shots, lastHit: this.hit, firstSeen: this.first, descending: !!this.lastVel && this.lastVel.y > 0, lastSeen: l ? { t: l.t, u: l.u, v: l.v } : null };
+    return {
+      shots: this.shots, lastHit: this.hit, firstSeen: this.first, descending: !!this.lastVel && this.lastVel.y > 0,
+      lastSeen: l ? { t: l.t, u: l.u, v: l.v, ...(l.air ? { air: true } : {}) } : null,
+      lastFloor: this.lastFloor, hitImage: this.hitImage,
+    };
   }
 
   /** What to show now, or null if the shuttle has not been seen for a while. */
@@ -142,6 +159,8 @@ export class ShuttleEstimator {
     const l = this.last;
     if (!l) return null;
     const age = now - l.t;
+    // in the air its floor position means nothing, so there is nothing to draw on the court map
+    if (l.air) return null;
     if (age <= FLYING_S) return { u: l.u, v: l.v, phase: 'flying' };
     if (age <= LANDED_S && this.shots >= 1 && this.lastVel && this.lastVel.y > 0) {
       return { u: l.u, v: l.v, phase: 'landed', inBounds: landingCall(l, singles).inBounds };

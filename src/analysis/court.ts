@@ -48,19 +48,39 @@ const apply = (m: Mat3, x: number, y: number): Pt => {
 export interface CourtMap {
   toScreen(u: number, v: number): Pt;
   toCourt(p: Pt): { u: number; v: number };
+  /**
+   * True for a picture point below the court's horizon, the line where the floor ends in the picture. Above it, a point cannot
+   * be on the floor, and `toCourt` gives meaningless answers (it flips behind the camera).
+   */
+  belowHorizon(p: Pt): boolean;
 }
 
 /** Builds the court-to-screen mapping from the four outer corners of the doubles court as seen by the camera. */
 export function courtMap(c: Corners): CourtMap {
   const fwd = squareToQuad([c.farLeft, c.farRight, c.nearRight, c.nearLeft]);
   const inv = adjugate(fwd);
+  const wAt = (p: Pt) => inv[6] * p.x + inv[7] * p.y + inv[8];
+  const wCentre = wAt(apply(fwd, 0.5, 0.5));
   return {
+    belowHorizon: (p) => wAt(p) * wCentre > 0,
     toScreen: (u, v) => apply(fwd, u, v),
     toCourt: (p) => {
       const q = apply(inv, p.x, p.y);
       return { u: q.x, v: q.y };
     },
   };
+}
+
+/**
+ * Where a picture point is on the court floor, and whether to trust it. A shuttle in the air is somewhere above the floor, and the
+ * floor position of its picture point is only right when it is on the floor. So `air` is set, and the position is not to be used,
+ * when the point is above the horizon or maps to somewhere well off the near and far ends. Only a shuttle on the floor can say
+ * where it came down.
+ */
+export function floorPosition(map: CourtMap, p: Pt): { u: number; v: number; air: boolean } {
+  const c = map.toCourt(p);
+  const air = !map.belowHorizon(p) || !Number.isFinite(c.u) || !Number.isFinite(c.v) || c.v < -0.1 || c.v > 1.1;
+  return { u: c.u, v: c.v, air };
 }
 
 const KEYS = ['farLeft', 'farRight', 'nearRight', 'nearLeft'] as const;
