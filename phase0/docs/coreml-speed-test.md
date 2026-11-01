@@ -49,3 +49,27 @@ Things to watch for:
   the answer for a frame arrives up to 8 frames later, which does not matter for scoring after the game.
 - **GMACs:** a rough size. Full TrackNetV3 at 8 frames is far beyond a phone in real time; the narrow variants are the candidates.
 - **File size** matters for the app download, but only a little.
+
+## Results (MacBook Air M1, Neural Engine, median)
+
+| Model | Frames | ms per prediction | ms per frame |
+|---|---|---|---|
+| v3-full | 8 | 23.6 | 2.9 |
+| v3-3f | 3 | 23.1 | 7.7 |
+| half-8f | 8 | 8.8 | 1.1 |
+| half-3f | 3 | 7.3 | 2.4 |
+| quarter-8f | 8 | 4.6 | 0.6 |
+| quarter-3f | 3 | 3.3 | 1.1 |
+| eighth-8f | 8 | 3.5 | 0.4 |
+| half-8f-hires (768x432) | 8 | 20.6 | 2.6 |
+| quarter-8f-hires | 8 | 9.9 | 1.2 |
+
+The full TrackNetV3 runs about 340 frames a second on the Neural Engine (GPU 99 ms and CPU 147 ms per prediction), so 60 fps video needs
+about 18% of it. Speed is not the limit; accuracy and data are. These are Mac numbers with Python overhead, an M1 is about an iPhone 12's
+class, and nothing else was running. Xcode's performance report on an iPhone 18 Pro Max (iOS 27.0) returned all zeros and was set aside.
+
+## Next: does the converted real model agree with PyTorch?
+
+`phase0/tools/run-coreml-parity.sh clip.mp4` converts the real weights to Core ML (half precision), runs both over the clip, and prints the
+Neural Engine time, the heatmap difference, and how many frames find the shuttle at the same spot. It writes both models' positions as CSVs
+that `tools/compare-tracknet.ts` can score.
