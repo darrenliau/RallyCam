@@ -61,6 +61,7 @@
     "backgroundColor": "#0B1210",
     "plugins": [
       "expo-router",
+      "./plugins/withPodsDeploymentTarget",
       [
         "expo-camera",
         {
