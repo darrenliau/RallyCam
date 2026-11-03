@@ -149,6 +149,10 @@ public class RallyCamCaptureModule: Module {
       CaptureController.shared.setShuttleModelCrop(x: x, y: y, w: w, h: h)
     }
 
+    Function("setShuttleModelFull") { (full: Bool) in
+      CaptureController.shared.setShuttleModelFull(full)
+    }
+
     // { state: off | loading | ready | missing | failed, problem, framesSeen, framesDropped, windows, windowsDropped, detections, predictMs }
     Function("getShuttleModelStatus") { () -> [String: Any] in
       CaptureController.shared.shuttleModelStatus()

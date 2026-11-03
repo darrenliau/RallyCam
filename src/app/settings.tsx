@@ -68,6 +68,17 @@ export default function Settings() {
               <Switch value={settings.shuttleModel} onValueChange={(v) => updateSettings({ shuttleModel: v })} accessibilityLabel="Shuttle model" />
             </View>
           )}
+          {EXPERIMENTS && settings.shuttleModel && (
+            <View style={s.row}>
+              <View style={{ flex: 1 }}>
+                <Label>Crop to the court · experimental</Label>
+                <Text style={s.muted}>
+                  Shows the model only the court and the air above it, so the shuttle is bigger to it. If the shuttle leaves that area it looks at the whole picture for a couple of seconds. Turn it off to always look at the whole picture.
+                </Text>
+              </View>
+              <Switch value={settings.cropModel} onValueChange={(v) => updateSettings({ cropModel: v })} accessibilityLabel="Crop the shuttle model to the court" />
+            </View>
+          )}
         </Card>
       )}
 

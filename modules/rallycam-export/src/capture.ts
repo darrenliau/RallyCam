@@ -66,6 +66,8 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   getShuttleModelStatus(): ShuttleModelStatus;
   /** Gives the shuttle model only this part of the frame (fractions, origin top left, 16:9 in pixels), or the whole frame when all are 0. Reported positions stay fractions of the whole frame. */
   setShuttleModelCrop(x: number, y: number, w: number, h: number): void;
+  /** While true the model looks at the whole frame even when a crop is set (its crop picture is kept ready). */
+  setShuttleModelFull(full: boolean): void;
   startShuttleLog(uri: string): void;
   stopShuttleLog(): void;
   getShuttleStatus(): { shuttleFrames: number; shuttleWithCandidates: number; shuttleConfirmed: number; shuttleShaky: number; shuttleLastCandidates: number };

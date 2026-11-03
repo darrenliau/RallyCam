@@ -33,6 +33,7 @@ import { consensusCourt, findCourt, type CourtFit } from '../analysis/courtLines
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
 import { courtOfServer, inferWinnerFromServe } from '../analysis/nextServe';
+import { CropGuard } from '../analysis/cropGuard';
 import { ModelTrackFilter } from '../analysis/modelTrack';
 import { PlayerMotion } from '../analysis/playerMotion';
 import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
@@ -357,6 +358,9 @@ export default function Record() {
   const [modelStatus, setModelStatus] = useState<ShuttleModelStatus | null>(null);
   const modelActive = modelWanted && modelStatus?.state === 'ready';
   const modelFilter = useRef(new ModelTrackFilter()).current;
+  // Looking only at the court: the guard says when to look at the whole frame instead
+  const cropGuard = useRef(new CropGuard()).current;
+  const viewFull = useRef(false);
   const modelMs = useRef(0);
   const lastShuttleT = useRef(0);
   const trailFrame = useRef<{ x: number; y: number }[]>([]);
@@ -447,6 +451,8 @@ export default function Record() {
       lastShuttleT.current = e.frames[e.frames.length - 1].t;
       modelMs.current = e.predictMs;
       for (const sample of modelFilter.push(e.frames)) estimator.push(sample);
+      const full = cropGuard.push(e.frames);
+      if (full !== viewFull.current) { viewFull.current = full; native.setShuttleModelFull(full); }
     });
     return () => { sub.remove(); clearInterval(id); native.setShuttleModel(false); modelFilter.reset(); setModelStatus(null); };
   }, [modelWanted, modelFilter, estimator]);
@@ -557,7 +563,7 @@ export default function Record() {
       const modelLine = () => {
         if (!modelWanted) return 'shuttle model: off';
         const m = native.getShuttleModelStatus();
-        return `shuttle model: ${m.state}${m.problem ? ` (${m.problem})` : ''}, ${m.predictMs.toFixed(0)} ms a window, ${m.detections} sightings, ${m.windows} windows, ${m.windowsDropped} dropped, ${m.framesDropped} frames dropped${modelActive ? ', simple tracker off' : ', simple tracker running'}`;
+        return `shuttle model: ${m.state}${m.problem ? ` (${m.problem})` : ''}, ${m.predictMs.toFixed(0)} ms a window, ${m.detections} sightings, ${m.windows} windows, ${m.windowsDropped} dropped, ${m.framesDropped} frames dropped${modelActive ? ', simple tracker off' : ', simple tracker running'}, looking at ${!settings.cropModel ? 'the whole frame (crop off)' : viewFull.current ? 'the whole frame (shuttle left the crop)' : 'the court crop'}`;
       };
       const t = tally.current;
       const act = motion.activity(Date.now() / 1000, 1.5);
@@ -571,11 +577,14 @@ export default function Record() {
   useEffect(() => {
     const native = Capture;
     if (!native || !modelWanted) return;
-    const crop = aligning ? null : modelCrop(shuttleRoiFromCorners(corners, geometry()), FRAME_ASPECT);
+    const crop = aligning || !settings.cropModel ? null : modelCrop(shuttleRoiFromCorners(corners, geometry()), FRAME_ASPECT);
+    cropGuard.setCrop(crop);
+    viewFull.current = false;
+    native.setShuttleModelFull(false);
     native.setShuttleModelCrop(crop?.x ?? 0, crop?.y ?? 0, crop?.w ?? 0, crop?.h ?? 0);
-    return () => native.setShuttleModelCrop(0, 0, 0, 0);
+    return () => { native.setShuttleModelCrop(0, 0, 0, 0); native.setShuttleModelFull(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelWanted, aligning, corners, width, height]);
+  }, [modelWanted, aligning, corners, width, height, settings.cropModel]);
 
   useEffect(() => {
     if (keepEstimatorOnce.current) {

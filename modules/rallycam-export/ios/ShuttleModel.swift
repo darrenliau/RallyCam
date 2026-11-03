@@ -48,7 +48,8 @@ final class ShuttleModel {
   private var windowsDropped = 0
   private var detections = 0
   private var predictMs = 0.0
-  private var requestedCrop = CGRect(x: 0, y: 0, width: 1, height: 1)   // fractions of the frame, top left origin; guarded by `lock`
+  private var requestedCrop: CGRect?    // the court crop, fractions of the frame, top left origin; nil means none. Guarded by `lock`
+  private var forceFull = false         // look at the whole frame for now, for example while the shuttle is out of the crop. Guarded by `lock`
 
   // Only touched on frameQueue
   private var small: CVPixelBuffer?
@@ -57,12 +58,19 @@ final class ShuttleModel {
   private var windowCount = 0
   private var windowTimes = [Double](repeating: 0, count: ShuttleModel.sequence)
   private var lastT = -Double.infinity
-  private var crop = CGRect(x: 0, y: 0, width: 1, height: 1)   // the crop in use: what the window and the background were made with
-  private var samples: [[UInt8]] = []          // background samples, red-green-blue planes, oldest first
-  private var samplesSinceMedian = 0
+  private static let whole = CGRect(x: 0, y: 0, width: 1, height: 1)
+  /// An empty-court picture for one way of looking at the frame, kept up to date whichever view is in use, so switching is instant.
+  private final class View {
+    var samples: [[UInt8]] = []          // background samples, red-green-blue planes, oldest first
+    var since = 0
+    var background: [Float]?             // 3 planes, divided by 255
+    var computing = false
+  }
+  private let views = [View(), View()]   // 0: the whole frame, 1: the court crop
+  private var smallAlt: CVPixelBuffer?   // the view not in use, rendered for its background
+  private var courtCrop: CGRect?         // the crop that view 1 was made for
+  private var activeView = 0
   private var lastSampleT = -Double.infinity
-  private var background: [Float]?             // 3 planes, divided by 255
-  private var computingBackground = false
   private static let sampleEvery = 0.25
   private static let maxSamples = 9
   private static let firstMedianAt = 5
@@ -73,8 +81,13 @@ final class ShuttleModel {
   func setCrop(x: Double, y: Double, w: Double, h: Double) {
     let valid = w > 0.2 && h > 0.2 && x >= 0 && y >= 0 && x + w <= 1.0001 && y + h <= 1.0001
     lock.lock()
-    requestedCrop = valid ? CGRect(x: x, y: y, width: w, height: h) : CGRect(x: 0, y: 0, width: 1, height: 1)
+    requestedCrop = valid ? CGRect(x: x, y: y, width: w, height: h) : nil
     lock.unlock()
+  }
+
+  /// While true the model looks at the whole frame even if a crop is set. The crop's own background is kept meanwhile.
+  func setFullFrame(_ full: Bool) {
+    lock.lock(); forceFull = full; lock.unlock()
   }
 
   // MARK: switching on and off
@@ -182,6 +195,12 @@ final class ShuttleModel {
       CVPixelBufferCreate(nil, ShuttleModel.width, ShuttleModel.height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &buffer)
       small = buffer
     }
+    if smallAlt == nil {
+      var buffer: CVPixelBuffer?
+      let attrs: [String: Any] = [kCVPixelBufferMetalCompatibilityKey as String: true, kCVPixelBufferIOSurfacePropertiesKey as String: [String: Any]()]
+      CVPixelBufferCreate(nil, ShuttleModel.width, ShuttleModel.height, kCVPixelFormatType_32BGRA, attrs as CFDictionary, &buffer)
+      smallAlt = buffer
+    }
     if inputs.isEmpty {
       let shape: [NSNumber] = [1, NSNumber(value: ShuttleModel.channels), NSNumber(value: ShuttleModel.height), NSNumber(value: ShuttleModel.width)]
       guard let a = try? MLMultiArray(shape: shape, dataType: .float32), let b = try? MLMultiArray(shape: shape, dataType: .float32) else {
@@ -199,32 +218,37 @@ final class ShuttleModel {
     return small != nil
   }
 
+  /// Shrinks the part `rect` (fractions, top left origin) of the frame to 512 x 288. Lanczos is the closest Core Image has to the
+  /// bicubic resize the model was trained with.
+  private func render(_ pixelBuffer: CVPixelBuffer, _ rect: CGRect, into target: CVPixelBuffer) {
+    let sourceW = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+    let sourceH = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+    // Core Image's origin is the bottom left, so the top left fractions are flipped
+    let part = CGRect(x: rect.minX * sourceW, y: (1 - rect.maxY) * sourceH, width: rect.width * sourceW, height: rect.height * sourceH)
+    let scale = CGFloat(ShuttleModel.height) / part.height
+    let aspect = (CGFloat(ShuttleModel.width) / part.width) / scale
+    let image = CIImage(cvPixelBuffer: pixelBuffer).cropped(to: part).transformed(by: CGAffineTransform(translationX: -part.minX, y: -part.minY)).applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: aspect])
+    ciContext.render(image, to: target, bounds: CGRect(x: 0, y: 0, width: ShuttleModel.width, height: ShuttleModel.height), colorSpace: CGColorSpaceCreateDeviceRGB())
+  }
+
   private func process(_ pixelBuffer: CVPixelBuffer, time t: Double) {
     guard makeBuffers(), let small else { return }
     // frames were lost for a moment: the window must be of frames in a row, so start it again
     if windowCount > 0 && t - lastT > 0.08 { windowCount = 0 }
     lastT = t
 
-    // the crop changed (the court was moved): the background and the window were made from another view, so start them again
-    lock.lock(); let wanted = requestedCrop; lock.unlock()
-    if wanted != crop {
-      crop = wanted
-      windowCount = 0
-      samples = []
-      samplesSinceMedian = 0
-      lastSampleT = -Double.infinity
-      background = nil
+    // which view: the court crop when there is one, unless the whole frame was asked for
+    lock.lock(); let wanted = requestedCrop; let full = forceFull; lock.unlock()
+    if wanted != courtCrop {
+      // the court was moved: the crop view's background was made for another place
+      courtCrop = wanted
+      views[1].samples = []; views[1].since = 0; views[1].background = nil
     }
+    let view = (courtCrop != nil && !full) ? 1 : 0
+    if view != activeView { activeView = view; windowCount = 0 }   // a window must be of one view
+    let rect = view == 1 ? courtCrop! : ShuttleModel.whole
 
-    // shrink to 512 x 288. Lanczos is the closest Core Image has to the bicubic resize the model was trained with.
-    let sourceW = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
-    let sourceH = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-    // the part to keep, in pixels. Core Image's origin is the bottom left, so the top left fractions are flipped
-    let part = CGRect(x: crop.minX * sourceW, y: (1 - crop.maxY) * sourceH, width: crop.width * sourceW, height: crop.height * sourceH)
-    let scale = CGFloat(ShuttleModel.height) / part.height
-    let aspect = (CGFloat(ShuttleModel.width) / part.width) / scale
-    let image = CIImage(cvPixelBuffer: pixelBuffer).cropped(to: part).transformed(by: CGAffineTransform(translationX: -part.minX, y: -part.minY)).applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: aspect])
-    ciContext.render(image, to: small, bounds: CGRect(x: 0, y: 0, width: ShuttleModel.width, height: ShuttleModel.height), colorSpace: CGColorSpaceCreateDeviceRGB())
+    render(pixelBuffer, rect, into: small)
 
     CVPixelBufferLockBaseAddress(small, .readOnly)
     defer { CVPixelBufferUnlockBaseAddress(small, .readOnly) }
@@ -233,9 +257,16 @@ final class ShuttleModel {
 
     if t - lastSampleT >= ShuttleModel.sampleEvery {
       lastSampleT = t
-      addBackgroundSample(base, stride)
+      addBackgroundSample(views[view], base, stride)
+      // and the other view's, so it is ready the moment it is needed
+      if courtCrop != nil, let alt = smallAlt {
+        render(pixelBuffer, view == 1 ? ShuttleModel.whole : courtCrop!, into: alt)
+        CVPixelBufferLockBaseAddress(alt, .readOnly)
+        if let altBase = CVPixelBufferGetBaseAddress(alt) { addBackgroundSample(views[1 - view], altBase, CVPixelBufferGetBytesPerRow(alt)) }
+        CVPixelBufferUnlockBaseAddress(alt, .readOnly)
+      }
     }
-    guard background != nil else { return }   // the first seconds only collect the background
+    guard views[view].background != nil else { return }   // the first seconds only collect the background
 
     let input = inputs[currentInput]
     let out = input.dataPointer.assumingMemoryBound(to: Float.self)
@@ -264,20 +295,20 @@ final class ShuttleModel {
     lock.unlock()
     // still busy with the last window: skip this one, and keep filling the same array
     if busy { return }
-    if let bg = background {
+    if let bg = views[activeView].background {
       bg.withUnsafeBufferPointer { (src: UnsafeBufferPointer<Float>) -> Void in
         _ = memcpy(input.dataPointer, src.baseAddress!, 3 * ShuttleModel.planeSize * MemoryLayout<Float>.size)
       }
     }
     let times = windowTimes
-    let used = crop
+    let used = activeView == 1 ? (courtCrop ?? ShuttleModel.whole) : ShuttleModel.whole
     currentInput = 1 - currentInput
     predictQueue.async { self.predict(input, times: times, crop: used) }
   }
 
   // MARK: background
 
-  private func addBackgroundSample(_ base: UnsafeMutableRawPointer, _ stride: Int) {
+  private func addBackgroundSample(_ view: View, _ base: UnsafeMutableRawPointer, _ stride: Int) {
     let plane = ShuttleModel.planeSize
     var sample = [UInt8](repeating: 0, count: 3 * plane)
     for y in 0..<ShuttleModel.height {
@@ -290,19 +321,20 @@ final class ShuttleModel {
         sample[2 * plane + o + x] = p[0]
       }
     }
-    samples.append(sample)
-    if samples.count > ShuttleModel.maxSamples { samples.removeFirst() }
-    samplesSinceMedian += 1
-    let due = background == nil ? samples.count >= ShuttleModel.firstMedianAt : samplesSinceMedian >= ShuttleModel.medianEvery
-    if due && !computingBackground {
-      computingBackground = true
-      samplesSinceMedian = 0
-      let snapshot = samples
+    view.samples.append(sample)
+    if view.samples.count > ShuttleModel.maxSamples { view.samples.removeFirst() }
+    view.since += 1
+    let due = view.background == nil ? view.samples.count >= ShuttleModel.firstMedianAt : view.since >= ShuttleModel.medianEvery
+    if due && !view.computing {
+      view.computing = true
+      view.since = 0
+      let snapshot = view.samples
       backgroundQueue.async {
         let median = ShuttleModel.median(of: snapshot)
         self.frameQueue.async {
-          self.background = median
-          self.computingBackground = false
+          // a crop that was replaced while this was being worked out left its samples empty: do not use the old picture
+          if !view.samples.isEmpty { view.background = median }
+          view.computing = false
         }
       }
     }
