@@ -64,6 +64,8 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   /** TrackNetV3 on the Neural Engine. Needs the model file in the build (ios/Models/README.md). Positions arrive with onShuttleModel. */
   setShuttleModel(enabled: boolean): void;
   getShuttleModelStatus(): ShuttleModelStatus;
+  /** Gives the shuttle model only this part of the frame (fractions, origin top left, 16:9 in pixels), or the whole frame when all are 0. Reported positions stay fractions of the whole frame. */
+  setShuttleModelCrop(x: number, y: number, w: number, h: number): void;
   startShuttleLog(uri: string): void;
   stopShuttleLog(): void;
   getShuttleStatus(): { shuttleFrames: number; shuttleWithCandidates: number; shuttleConfirmed: number; shuttleShaky: number; shuttleLastCandidates: number };

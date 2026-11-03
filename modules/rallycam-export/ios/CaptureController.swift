@@ -690,6 +690,8 @@ final class CaptureController: NSObject {
 
   func shuttleModelStatus() -> [String: Any] { shuttleModel.status() }
 
+  func setShuttleModelCrop(x: Double, y: Double, w: Double, h: Double) { shuttleModel.setCrop(x: x, y: y, w: w, h: h) }
+
   /// Offers the model about 60 frames a second, which is what it was shown in testing: every second frame of a 120 fps camera.
   private func shuttleModelIfDue(_ pixelBuffer: CVPixelBuffer, time: CMTime) {
     modelFrame += 1

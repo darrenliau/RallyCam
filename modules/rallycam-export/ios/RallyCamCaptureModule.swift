@@ -144,6 +144,11 @@ public class RallyCamCaptureModule: Module {
       CaptureController.shared.setShuttleModel(enabled: enabled)
     }
 
+    // The part of the frame the shuttle model looks at (fractions, top left origin); all zeros means the whole frame.
+    Function("setShuttleModelCrop") { (x: Double, y: Double, w: Double, h: Double) in
+      CaptureController.shared.setShuttleModelCrop(x: x, y: y, w: w, h: h)
+    }
+
     // { state: off | loading | ready | missing | failed, problem, framesSeen, framesDropped, windows, windowsDropped, detections, predictMs }
     Function("getShuttleModelStatus") { () -> [String: Any] in
       CaptureController.shared.shuttleModelStatus()

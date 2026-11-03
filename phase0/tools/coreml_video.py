@@ -51,6 +51,7 @@ def main():
     ap.add_argument("--threshold", type=float, default=0.5)
     ap.add_argument("--keep-overlay", action="store_true")
     ap.add_argument("--compute", default="ne", choices=["ne", "all", "cpu"], help="ne = Neural Engine (default)")
+    ap.add_argument("--crop", help="x,y,w,h as fractions of the frame (top left origin): show the model only this part, as the app now does with the court. Positions in the CSV stay in the whole frame.")
     ap.add_argument("--max-seconds", type=float, help="only the first part of the video, to try it out")
     args = ap.parse_args()
 
@@ -59,13 +60,16 @@ def main():
     model = ct.models.MLModel(str(Path(args.model).expanduser()), compute_units=units)
     video = Path(args.video).expanduser()
     ow, oh, fps = probe(video)
-    sx, sy = ow / W, oh / H
+    cx, cy, cw, ch = (float(v) for v in args.crop.split(",")) if args.crop else (0.0, 0.0, 1.0, 1.0)
+    sx, sy = ow * cw / W, oh * ch / H           # a model pixel in video pixels
+    ox, oy = ow * cx, oh * cy                   # where the cropped part starts in the video
     print(f"{video.name}: {ow}x{oh}, {fps:g} frames a second")
 
     cmd = ["ffmpeg", "-v", "error", "-i", str(video)]
     if args.max_seconds:
         cmd += ["-t", str(args.max_seconds)]
-    cmd += ["-vf", f"scale={W}:{H}:flags=bicubic", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
+    crop = f"crop=iw*{cw}:ih*{ch}:iw*{cx}:ih*{cy}," if args.crop else ""
+    cmd += ["-vf", f"{crop}scale={W}:{H}:flags=bicubic", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE)
     frame_bytes = W * H * 3
 
@@ -114,7 +118,7 @@ def main():
             if pk is None:
                 wr.writerow([i, 0, 0, 0])
                 continue
-            x, y = (pk[0] + 0.5) * sx, (pk[1] + 0.5) * sy
+            x, y = ox + (pk[0] + 0.5) * sx, oy + (pk[1] + 0.5) * sy
             if not args.keep_overlay and on_overlay(x / ow, y / oh):
                 ignored += 1
                 wr.writerow([i, 0, 0, 0])

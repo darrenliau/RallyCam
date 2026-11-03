@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { courtMap, defaultCorners } from './court';
-import { cropResizeRgb, decodeDetections, frameToScreen, rgbLayoutFor, roiFromCorners, screenToFrame, shuttleRoiFromCorners } from './preprocess';
+import { cropResizeRgb, decodeDetections, frameToScreen, modelCrop, rgbLayoutFor, roiFromCorners, screenToFrame, shuttleRoiFromCorners } from './preprocess';
 import { footToScreen, type FrameGeometry } from './tracker';
 
 const g: FrameGeometry = { frameAspect: 16 / 9, screenW: 900, screenH: 400 };
@@ -105,5 +105,30 @@ describe('frameToScreen and the shuttle area', () => {
     expect(shuttle.y).toBeLessThanOrEqual(players.y);
     expect(shuttle.y + shuttle.h).toBeLessThanOrEqual(1);
     expect(shuttle.h).toBeGreaterThan(players.h * 0.8);
+  });
+});
+
+describe('modelCrop', () => {
+  it('grows a wide region to the model shape and keeps it inside the frame', () => {
+    const c = modelCrop({ x: 0.2, y: 0.1, w: 0.5, h: 0.4 }, 16 / 9)!;
+    expect(c.w).toBeCloseTo(c.h, 6);      // 16:9 pixels in a 16:9 frame: equal fractions
+    expect(c.x).toBeGreaterThanOrEqual(0);
+    expect(c.y).toBeGreaterThanOrEqual(0);
+    expect(c.x + c.w).toBeLessThanOrEqual(1);
+    expect(c.y + c.h).toBeLessThanOrEqual(1);
+    expect(c.x).toBeLessThanOrEqual(0.2);  // still contains the region
+    expect(c.x + c.w).toBeGreaterThanOrEqual(0.7);
+    expect(c.y).toBeLessThanOrEqual(0.1);
+    expect(c.y + c.h).toBeGreaterThanOrEqual(0.5);
+  });
+  it('shifts the crop in from the frame edge instead of cutting it', () => {
+    const c = modelCrop({ x: 0.0, y: 0.0, w: 0.4, h: 0.3 }, 16 / 9)!;
+    expect(c.x).toBe(0);
+    expect(c.y).toBe(0);
+  });
+  it('gives nothing when the region is nearly the whole frame, or cannot fit the shape', () => {
+    expect(modelCrop({ x: 0.02, y: 0.02, w: 0.96, h: 0.96 }, 16 / 9)).toBeNull();
+    expect(modelCrop({ x: 0, y: 0, w: 0.3, h: 1 }, 4 / 3)).toBeNull();   // a narrow, full-height region in a 4:3 frame needs more than the frame is wide
+    expect(modelCrop({ x: 0, y: 0, w: 0, h: 0 }, 16 / 9)).toBeNull();
   });
 });

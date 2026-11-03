@@ -260,3 +260,8 @@ The debug panel, the "Shuttle model" and "Keep a clean copy" switches, simulated
 
 ## Training mode
 New → **Training** tracks players and shuttle exactly like a game (court, tags, court map, distance, shuttle marker, clean copy, shuttle log) but keeps no score: no scoreboard on screen or in the video, no point buttons, no automatic points, no auto-stop. End with **End session**. Stored as `matches.training` (migration v5); the list shows "Training" and Review hides the score and point list. Not yet tried on a phone.
+
+## Shuttle model: crop to the court, and what did not help
+- **Crop.** With the court locked, the shuttle model is shown only the court and the air above it (`shuttleRoiFromCorners` → `modelCrop`, grown to 16:9) instead of the whole frame, so the shuttle is bigger to it. Positions still come back as fractions of the whole frame. The whole frame is used while aligning, or when the crop would be nearly everything. Not tried on a phone. To measure the gain on a Mac with the same clip: run `phase0/tools/run-coreml-video.sh clip.mp4 "" --crop x,y,w,h` (fractions, top left origin) and compare the CSV with the uncropped run using `tools/compare-tracknet.ts`.
+- **Fixed-spot memory (tried, dropped).** Learning spots where the model "sees" a still shuttle again and again (logos, lines) either cut recall of the labelled flights in half (loose settings) or did nothing (strict ones) on the data we have, so it was not kept. Revisit with real court footage.
+- **Player bodies** are not used to reject sightings: tracks only hold court positions, no boxes.

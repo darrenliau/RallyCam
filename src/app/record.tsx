@@ -9,7 +9,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
 import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
 import { cornersToFrame, type OverlaySnapshot } from '../analysis/overlay';
-import { frameToScreen, roiFromCorners, shuttleRoiFromCorners } from '../analysis/preprocess';
+import { frameToScreen, modelCrop, roiFromCorners, shuttleRoiFromCorners } from '../analysis/preprocess';
 import { DistanceMeter, SimulatedTracker, type Track } from '../analysis/players';
 import { SimulatedShuttle, type ShuttleOnMap, type ShuttleStats } from '../analysis/shuttle';
 import { ShuttleEstimator } from '../analysis/shuttleStats';
@@ -566,6 +566,16 @@ export default function Record() {
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shuttleOn, estimator, modelWanted, modelActive]);
+
+  // Once the court is locked, the model is shown only the court and the air above it, so the shuttle is bigger to it
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !modelWanted) return;
+    const crop = aligning ? null : modelCrop(shuttleRoiFromCorners(corners, geometry()), FRAME_ASPECT);
+    native.setShuttleModelCrop(crop?.x ?? 0, crop?.y ?? 0, crop?.w ?? 0, crop?.h ?? 0);
+    return () => native.setShuttleModelCrop(0, 0, 0, 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [modelWanted, aligning, corners, width, height]);
 
   useEffect(() => {
     if (keepEstimatorOnce.current) {

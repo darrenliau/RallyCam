@@ -64,6 +64,23 @@ export function shuttleRoiFromCorners(c: Corners, g: FrameGeometry): Roi {
   return { x: left, y: top, w: right - left, h: bottom - top };
 }
 
+/**
+ * The part of the camera frame to give the shuttle model. The model always looks at 512 x 288, so the less of the frame it is
+ * given, the bigger the shuttle is in its eyes. This grows the shuttle's region (court plus the air above it) to the model's
+ * 16:9 shape without distorting it, keeping it inside the frame. Returns null when it would be nearly the whole frame anyway.
+ */
+export function modelCrop(roi: Roi, frameAspect: number): Roi | null {
+  const shape = (16 / 9) / frameAspect;   // width over height, in fractions of the frame
+  let { x, y, w, h } = roi;
+  if (!(w > 0 && h > 0)) return null;
+  if (w / h < shape) { const nw = h * shape; x -= (nw - w) / 2; w = nw; }
+  else { const nh = w / shape; y -= (nh - h) / 2; h = nh; }
+  if (w > 1 || h > 1) return null;
+  x = Math.min(Math.max(x, 0), 1 - w);
+  y = Math.min(Math.max(y, 0), 1 - h);
+  return w * h >= 0.85 ? null : { x, y, w, h };
+}
+
 export interface RgbLayout { bytesPerPixel: number; r: number; g: number; b: number }
 
 /** Where the red, green and blue bytes sit in a pixel for the frame formats vision-camera can deliver. */

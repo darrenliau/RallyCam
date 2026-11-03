@@ -48,6 +48,7 @@ final class ShuttleModel {
   private var windowsDropped = 0
   private var detections = 0
   private var predictMs = 0.0
+  private var requestedCrop = CGRect(x: 0, y: 0, width: 1, height: 1)   // fractions of the frame, top left origin; guarded by `lock`
 
   // Only touched on frameQueue
   private var small: CVPixelBuffer?
@@ -56,6 +57,7 @@ final class ShuttleModel {
   private var windowCount = 0
   private var windowTimes = [Double](repeating: 0, count: ShuttleModel.sequence)
   private var lastT = -Double.infinity
+  private var crop = CGRect(x: 0, y: 0, width: 1, height: 1)   // the crop in use: what the window and the background were made with
   private var samples: [[UInt8]] = []          // background samples, red-green-blue planes, oldest first
   private var samplesSinceMedian = 0
   private var lastSampleT = -Double.infinity
@@ -65,6 +67,15 @@ final class ShuttleModel {
   private static let maxSamples = 9
   private static let firstMedianAt = 5
   private static let medianEvery = 40   // 10 seconds: the median is the slowest step, so it is not redone often
+
+  /// Looks at only this part of the frame (fractions, top left origin), so the shuttle is bigger to the model. Positions are still
+  /// reported as fractions of the whole frame. All zeros means the whole frame. Takes effect at the next frame.
+  func setCrop(x: Double, y: Double, w: Double, h: Double) {
+    let valid = w > 0.2 && h > 0.2 && x >= 0 && y >= 0 && x + w <= 1.0001 && y + h <= 1.0001
+    lock.lock()
+    requestedCrop = valid ? CGRect(x: x, y: y, width: w, height: h) : CGRect(x: 0, y: 0, width: 1, height: 1)
+    lock.unlock()
+  }
 
   // MARK: switching on and off
 
@@ -194,12 +205,25 @@ final class ShuttleModel {
     if windowCount > 0 && t - lastT > 0.08 { windowCount = 0 }
     lastT = t
 
+    // the crop changed (the court was moved): the background and the window were made from another view, so start them again
+    lock.lock(); let wanted = requestedCrop; lock.unlock()
+    if wanted != crop {
+      crop = wanted
+      windowCount = 0
+      samples = []
+      samplesSinceMedian = 0
+      lastSampleT = -Double.infinity
+      background = nil
+    }
+
     // shrink to 512 x 288. Lanczos is the closest Core Image has to the bicubic resize the model was trained with.
     let sourceW = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
     let sourceH = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-    let scale = CGFloat(ShuttleModel.height) / sourceH
-    let aspect = (CGFloat(ShuttleModel.width) / sourceW) / scale
-    let image = CIImage(cvPixelBuffer: pixelBuffer).applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: aspect])
+    // the part to keep, in pixels. Core Image's origin is the bottom left, so the top left fractions are flipped
+    let part = CGRect(x: crop.minX * sourceW, y: (1 - crop.maxY) * sourceH, width: crop.width * sourceW, height: crop.height * sourceH)
+    let scale = CGFloat(ShuttleModel.height) / part.height
+    let aspect = (CGFloat(ShuttleModel.width) / part.width) / scale
+    let image = CIImage(cvPixelBuffer: pixelBuffer).cropped(to: part).transformed(by: CGAffineTransform(translationX: -part.minX, y: -part.minY)).applyingFilter("CILanczosScaleTransform", parameters: [kCIInputScaleKey: scale, kCIInputAspectRatioKey: aspect])
     ciContext.render(image, to: small, bounds: CGRect(x: 0, y: 0, width: ShuttleModel.width, height: ShuttleModel.height), colorSpace: CGColorSpaceCreateDeviceRGB())
 
     CVPixelBufferLockBaseAddress(small, .readOnly)
@@ -246,8 +270,9 @@ final class ShuttleModel {
       }
     }
     let times = windowTimes
+    let used = crop
     currentInput = 1 - currentInput
-    predictQueue.async { self.predict(input, times: times) }
+    predictQueue.async { self.predict(input, times: times, crop: used) }
   }
 
   // MARK: background
@@ -299,7 +324,7 @@ final class ShuttleModel {
 
   // MARK: prediction
 
-  private func predict(_ input: MLMultiArray, times: [Double]) {
+  private func predict(_ input: MLMultiArray, times: [Double], crop: CGRect) {
     defer { lock.lock(); predicting = false; lock.unlock() }
     lock.lock(); let model = self.model; lock.unlock()
     guard let model else { return }
@@ -311,7 +336,11 @@ final class ShuttleModel {
         fail("failed", "the model gave no heatmaps")
         return
       }
-      let frames = ShuttleModel.decode(heat, times: times)
+      let frames = ShuttleModel.decode(heat, times: times).map { f -> ShuttleModelFrame in
+        guard let x = f.x, let y = f.y else { return f }
+        // fractions of the crop back to fractions of the whole frame
+        return ShuttleModelFrame(t: f.t, x: Double(crop.minX) + x * Double(crop.width), y: Double(crop.minY) + y * Double(crop.height))
+      }
       let ms = (CFAbsoluteTimeGetCurrent() - started) * 1000
       lock.lock()
       windows += 1
