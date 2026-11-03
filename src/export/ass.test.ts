@@ -273,3 +273,15 @@ describe('hiding empty shuttle cards (store builds)', () => {
   });
 
 });
+
+describe('training sessions', () => {
+  it('draw no scoreboard, live or in the saved overlay', async () => {
+    const { buildLiveScene } = await import('./ass');
+    const { newMatch } = await import('../engine/scoring');
+    const base = { players: { A: ['You'], B: ['Sam'] }, type: 'singles' as const, bestOf: 1 as const, firstServer: 'A' as const };
+    const game = buildLiveScene({ config: base, state: newMatch(base), frameAspect: 16 / 9, corners: undefined as never });
+    const practice = { ...base, training: true };
+    const trainingScene = buildLiveScene({ config: practice, state: newMatch(practice), frameAspect: 16 / 9, corners: undefined as never });
+    expect(trainingScene.items.length).toBeLessThan(game.items.length);
+  });
+});

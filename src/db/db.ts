@@ -78,5 +78,11 @@ async function open() {
       PRAGMA user_version = 4;
     `);
   }
+  if (version < 5) {
+    await db.execAsync(`
+      ALTER TABLE matches ADD COLUMN training INTEGER NOT NULL DEFAULT 0;
+      PRAGMA user_version = 5;
+    `);
+  }
   return db;
 }

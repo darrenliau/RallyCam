@@ -18,6 +18,7 @@ interface MatchRow {
   venue_id: string | null;
   venue_name: string | null;
   overlay_video_uri: string | null;
+  training: number;
 }
 
 interface RallyRow {
@@ -60,6 +61,7 @@ function toRecord(m: MatchRow, rallies: RallyRow[]): MatchRecord {
     bestOf: m.best_of,
     firstServer: m.first_server,
     players: JSON.parse(m.players),
+    ...(m.training ? { training: true } : {}),
   };
   return {
     id: m.id,
@@ -77,8 +79,8 @@ export async function createMatch(config: MatchConfig, venueId?: string | null):
   const db = await getDb();
   const id = newId();
   await db.runAsync(
-    'INSERT INTO matches (id, created_at, type, best_of, first_server, players, venue_id) VALUES (?, ?, ?, ?, ?, ?, ?)',
-    id, Date.now(), config.type, config.bestOf, config.firstServer, JSON.stringify(config.players), venueId ?? null,
+    'INSERT INTO matches (id, created_at, type, best_of, first_server, players, venue_id, training) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+    id, Date.now(), config.type, config.bestOf, config.firstServer, JSON.stringify(config.players), venueId ?? null, config.training ? 1 : 0,
   );
   return id;
 }

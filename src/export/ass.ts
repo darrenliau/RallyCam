@@ -330,7 +330,7 @@ export function buildScene(input: AssInput): Scene {
   // Score: one stretch for every moment the score changed
   const edges = [0, ...rallies.map((r) => r.endMs ?? 0).filter((t) => t > 0 && t < durationMs), durationMs];
   for (let i = 0; i < edges.length - 1; i++) {
-    if (edges[i + 1] > edges[i]) scoreboard(c, stateAt(config, rallies, edges[i]), edges[i], edges[i + 1]);
+    if (edges[i + 1] > edges[i] && !config.training) scoreboard(c, stateAt(config, rallies, edges[i]), edges[i], edges[i + 1]);
   }
 
   const segs = buildSegments(overlay.snapshots, durationMs, stride);
@@ -422,7 +422,7 @@ export function buildLiveScene(input: LiveInput): Scene {
   const nNear = config.players.A.length;
   const colorOf = (p: number) => (p < nNear ? NEAR[p] : FAR[p - nNear]);
 
-  scoreboard(c, state, 0, LIVE_END);
+  if (!config.training) scoreboard(c, state, 0, LIVE_END);
   shuttleCards(c, snapshot, 0, LIVE_END);
   distanceCard(c, names, colorOf, snapshot, 0, LIVE_END, canvasH);
   courtMapStatic(c, LIVE_END);

@@ -118,7 +118,7 @@ export default function MatchReview() {
       <Pressable onPress={() => router.back()}><Text style={s.back}>‹ Back</Text></Pressable>
       <View>
         <Text style={s.title}>{describeMatch(state)}</Text>
-        <Text style={s.muted}>{new Date(match.createdAt).toLocaleString()}{match.venueName ? ` · ${match.venueName}` : ''} · {resultLine(state)} {state.config.bestOf > 1 ? `(${gameScores(state)})` : ''}</Text>
+        <Text style={s.muted}>{new Date(match.createdAt).toLocaleString()}{match.venueName ? ` · ${match.venueName}` : ''} · {state.config.training ? 'Training' : resultLine(state)} {!state.config.training && state.config.bestOf > 1 ? `(${gameScores(state)})` : ''}</Text>
       </View>
 
       {match.videoUri && overlay && !match.overlayVideoUri ? (
@@ -215,6 +215,8 @@ export default function MatchReview() {
         </Card>
       )}
 
+      {!state.config.training && (
+      <>
       <View style={s.row}>
         <Stat value={String(stats.count)} label="rallies" />
         <Stat value={stats.avgSeconds ? `${stats.avgSeconds.toFixed(1)}s` : '–'} label="avg time per point" />
@@ -246,6 +248,8 @@ export default function MatchReview() {
           </Card>
         );
       })}
+      </>
+      )}
       {fileExists(analysisVideoUriFor(match.id)) && (
         <Card style={{ gap: 6 }}>
           <Label>Clean copy for analysis</Label>

@@ -30,7 +30,7 @@ export default function Matches() {
       {matches === null ? null : matches.length === 0 ? (
         <Card>
           <Text style={s.emptyTitle}>No games yet</Text>
-          <Text style={s.muted}>Set the phone on a tripod behind the court, then start a game. The score is kept for you, and recording stops when someone reaches 21.</Text>
+          <Text style={s.muted}>Set the phone on a tripod behind the court, then start a game. The score is kept for you, and recording stops when someone reaches 21. Or choose Training to track the players and shuttle with no score.</Text>
         </Card>
       ) : (
         <>
@@ -41,11 +41,11 @@ export default function Matches() {
                 <View style={{ flex: 1 }}>
                   <Text style={s.name}>{describeMatch(m.state)}</Text>
                   <Text style={s.muted}>
-                    {new Date(m.createdAt).toLocaleDateString()} · {m.state.matchWinner ? 'Game' : 'Unfinished game'} · {m.state.config.type}{m.venueName ? ` · ${m.venueName}` : ''}
+                    {new Date(m.createdAt).toLocaleDateString()} · {m.state.config.training ? 'Training' : m.state.matchWinner ? 'Game' : 'Unfinished game'} · {m.state.config.type}{m.venueName ? ` · ${m.venueName}` : ''}
                     {m.durationMs ? ` · ${formatClock(m.durationMs)}` : ''}
                   </Text>
                 </View>
-                <Text style={[s.result, { color: m.state.matchWinner === 'A' ? colors.green : m.state.matchWinner === 'B' ? colors.red : colors.muted }]}>{resultLine(m.state)}</Text>
+                {!m.state.config.training && <Text style={[s.result, { color: m.state.matchWinner === 'A' ? colors.green : m.state.matchWinner === 'B' ? colors.red : colors.muted }]}>{resultLine(m.state)}</Text>}
               </Card>
             </Pressable>
           ))}

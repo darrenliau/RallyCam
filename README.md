@@ -257,3 +257,6 @@ Tried on 12 frames of the wide-hall recording (low camera, players on the lines)
 ### Test features in every build
 
 The debug panel, the "Shuttle model" and "Keep a clean copy" switches, simulated players and the shuttle cards show in **every** build, development, release and TestFlight. Only a store build leaves them out: it is made with `EXPO_PUBLIC_STORE_BUILD=1`, which the `production` profile in `eas.json` sets (the `testflight` profile sets it to 0). See `src/config.ts`. Before submitting to the App Store, build with `eas build --profile production` and check Settings and the Record screen show none of them.
+
+## Training mode
+New → **Training** tracks players and shuttle exactly like a game (court, tags, court map, distance, shuttle marker, clean copy, shuttle log) but keeps no score: no scoreboard on screen or in the video, no point buttons, no automatic points, no auto-stop. End with **End session**. Stored as `matches.training` (migration v5); the list shows "Training" and Review hides the score and point list. Not yet tried on a phone.

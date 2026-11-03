@@ -8,6 +8,8 @@ export interface MatchConfig {
   players: { A: string[]; B: string[] };
   bestOf: 1 | 3;
   firstServer: Side;
+  /** Practice: players and shuttle are tracked, but nothing is scored. */
+  training?: boolean;
 }
 
 /** One finished rally. Only `winner` matters for the score; the rest is analysis metadata. */

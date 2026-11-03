@@ -43,6 +43,8 @@ export default function NewMatch() {
   const [a, setA] = useState(['You', 'Mia']);
   const [b, setB] = useState(['Sam', 'Jun']);
   const [footage, setFootage] = useState(false);
+  const [mode, setMode] = useState<'game' | 'training'>('game');
+  const training = mode === 'training';
   const [venues, setVenues] = useState<Venue[]>([]);
   const [venueId, setVenueId] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -88,6 +90,7 @@ export default function NewMatch() {
     if (venueId) await touchVenue(venueId);
     const config: MatchConfig = {
       type, bestOf: 1, firstServer: 'A', // one game: the recording stops when someone wins it
+      ...(training ? { training: true } : {}),
       players: { A: clean(a, ['You', 'Mia']), B: clean(b, ['Sam', 'Jun']) },
     };
     router.push({ pathname: '/record', params: { config: JSON.stringify(config), ...(venueId ? { venueId } : {}), ...(footage ? { capture: '1' } : {}) } });
@@ -97,7 +100,8 @@ export default function NewMatch() {
   return (
     <KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}>
       <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={{ paddingTop: insets.top + 12, paddingHorizontal: 16, paddingBottom: 24, gap: 12 }}>
-        <Text style={s.title}>New game</Text>
+        <Text style={s.title}>{training ? 'New training session' : 'New game'}</Text>
+        <Segmented value={mode} onChange={setMode} options={[{ label: 'Game', value: 'game' }, { label: 'Training', value: 'training' }]} />
         <Segmented value={type} onChange={setType} options={[{ label: 'Singles', value: 'singles' }, { label: 'Doubles', value: 'doubles' }]} />
         <Card style={{ gap: 8 }}>
           <Label>Near side · closest to the camera</Label>
@@ -135,7 +139,7 @@ export default function NewMatch() {
           )}
         </Card>
         <Text style={s.hint}>Put the phone on a tripod behind the near baseline, so all four court corners are in view.</Text>
-        <Text style={s.hint}>First to 21 wins, by 2 points, up to 30. Tap the winner's button after each point. Recording stops by itself when the game is won.</Text>
+        <Text style={s.hint}>{training ? 'Training tracks the players and the shuttle but keeps no score. Recording stops when you tap End session.' : "First to 21 wins, by 2 points, up to 30. Tap the winner's button after each point. Recording stops by itself when the game is won."}</Text>
         {usesNativeCapture && (
           <Pressable accessibilityRole="switch" accessibilityState={{ checked: footage }} onPress={() => setFootage((v) => !v)}>
             <Card style={{ gap: 4, borderColor: footage ? colors.accent : colors.line }}>
@@ -146,7 +150,7 @@ export default function NewMatch() {
             </Card>
           </Pressable>
         )}
-        <Button label={footage ? 'Start footage capture' : 'Start game'} onPress={start} />
+        <Button label={footage ? 'Start footage capture' : training ? 'Start training' : 'Start game'} onPress={start} />
       </ScrollView>
     </KeyboardAvoidingView>
   );

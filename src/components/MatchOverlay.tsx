@@ -61,7 +61,7 @@ export function MatchOverlay({
         );
       })()}
       <View style={{ position: 'absolute', top: inset.t, left: (width - boardW) / 2, width: boardW }} pointerEvents="none">
-        <ScoreBoard state={state} />
+        {!state.config.training && <ScoreBoard state={state} />}
       </View>
       {!scoreOnly && (
         <>

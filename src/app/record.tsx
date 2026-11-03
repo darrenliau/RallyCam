@@ -54,6 +54,8 @@ export default function Record() {
   const settings = useSettings();
   const profile = footage ? FOOTAGE_PRESET : QUALITY[settings.quality];
   const config = useRef<MatchConfig>(JSON.parse(raw)).current;
+  // Training: players and shuttle are tracked as in a game, but nothing is scored
+  const training = !!config.training;
 
   // Matches are filmed in landscape: the court is wide and the phone sits on a tripod. Everything else stays portrait.
   useEffect(() => {
@@ -491,7 +493,13 @@ export default function Record() {
           hitState.current.side = at ? hitterSide(frameToScreen({ x: at.x, y: at.y }, geometry()), latest.current.tracks, mapRef.current)?.side : undefined;
         }
       }
-      if (ctx.recording && !ctx.over && !judged.current) {
+      if (training && ctx.recording) {
+        // nothing is scored, but the shuttle's speed and shot count start afresh between rallies
+        const trace = estimator.trace();
+        const calm = trace.lastSeen ? motion.calm(Date.now() / 1000, now - trace.lastSeen.t) : undefined;
+        if (isRallyOver(trace, now, ctx.singles, calm)) estimator.newRally();
+      }
+      if (!training && ctx.recording && !ctx.over && !judged.current) {
         const trace = estimator.trace();
         let verdict: Verdict | null = null;
         const wall = Date.now() / 1000;
@@ -808,6 +816,7 @@ export default function Record() {
             <Text style={s.chipText}>Players {tracks.filter((t) => !t.lost).length}/{names.length}</Text>
           </View>
         )}
+        {training && <View style={s.chip}><Text style={[s.chipText, { color: colors.accent }]}>Training · no score</Text></View>}
         {footage && <View style={s.chip}><Text style={[s.chipText, { color: colors.accent }]}>Footage capture · no overlay</Text></View>}
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
@@ -832,7 +841,7 @@ export default function Record() {
         </Text>
       )}
 
-      {!aligning && !footage && (
+      {!aligning && !footage && !training && (
         <View style={[s.scoreBtns, { bottom: B, left: (width - 320) / 2 }]}>
           <Button label={`+ ${config.players.A.join(' & ')}`} onPress={() => onPoint('A')} disabled={!recording || !!state.matchWinner} style={s.scoreBtn} />
           <Button label={`+ ${config.players.B.join(' & ')}`} onPress={() => onPoint('B')} disabled={!recording || !!state.matchWinner} style={s.scoreBtn} />
@@ -884,8 +893,8 @@ export default function Record() {
 
       {!aligning && (
       <View style={[s.actions, { right: R, bottom: B }]}>
-        <Button kind="ghost" label="Fix last point" onPress={onUndo} disabled={state.rallies.length === 0} />
-        <Button label={state.matchWinner ? 'Finish now' : 'End game'} onPress={endMatch} disabled={ending} />
+        {!training && <Button kind="ghost" label="Fix last point" onPress={onUndo} disabled={state.rallies.length === 0} />}
+        <Button label={training ? 'End session' : state.matchWinner ? 'Finish now' : 'End game'} onPress={endMatch} disabled={ending} />
       </View>
       )}
       {venueLoaded && aligning && (
