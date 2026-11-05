@@ -29,3 +29,19 @@ Then in App Store Connect > TestFlight, wait for "Processing" to finish, answer 
 - Automatic scoring will make mistakes. Check flagged points on the Review screen, and tap "Wrong, swap" or "Fix last point".
 - After a game, share the shuttle log (Review screen) and the video if the shuttle tracking was on.
 - If the red text appears on Record, send a screenshot.
+
+
+## Xcode Cloud (no EAS)
+Xcode Cloud builds straight from GitHub. The `ios/` folder is made by Expo and is not in git, so `ci_scripts/ci_post_clone.sh` makes it on the runner (installs node and CocoaPods, runs `npm ci`, `expo prebuild`, `pod install`, and sets the build number from `CI_BUILD_NUMBER`). It sets `EXPO_PUBLIC_STORE_BUILD=0`, so the test features show.
+
+Before the first run:
+1. Put the shuttle model in the repository, because the cloud runner cannot see your Mac: `cp -R <your TrackNetV3.mlpackage> modules/rallycam-export/ios/Models/TrackNetV3.mlpackage`, then `git add`, commit and push (about 23 MB). The script stops with a clear message if it is missing.
+2. In Xcode: Product > Xcode Cloud > Create Workflow. Workspace `ios/RallyCam.xcworkspace` (it exists once the script has run), scheme `RallyCam`, action Archive iOS, post-action TestFlight (Internal Testing), start on changes to `main`.
+3. App Store Connect: the app record for `com.darrenliau.rallycam`, and your testers in an internal group.
+
+If the log says the script did not run, or the workspace is still missing, send me the first red lines of the log.
+
+## What is new to test in this build
+- **Training** on the New screen: tracks players and shuttle, keeps no score; End session.
+- **Settings > Shuttle model**: *Crop to the court* and *Only this court*. Compare with them off if the shuttle is missed.
+- Send back from Review: the clean copy (or a trimmed clip), the shuttle log, a screenshot of the debug panel and a few rally times with who won.
