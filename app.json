@@ -9,6 +9,7 @@
     "ios": {
       "supportsTablet": false,
       "bundleIdentifier": "com.darrenliau.rallycam",
+      "appleTeamId": "7L6MN59QB8",
       "infoPlist": {
         "ITSAppUsesNonExemptEncryption": false
       },
