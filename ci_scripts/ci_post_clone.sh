@@ -21,7 +21,11 @@ npm ci
 
 # A TestFlight build shows the test features (debug panel, shuttle model and clean-copy switches); a store build would use 1
 export EXPO_PUBLIC_STORE_BUILD=0
+# prebuild starts ios/ afresh when it holds no project, which would remove ios/ci_scripts: put it back afterwards
+KEEP="$(mktemp -d)"
+[ -d ios/ci_scripts ] && cp -R ios/ci_scripts "$KEEP/"
 npx expo prebuild --platform ios --no-install
+[ -d "$KEEP/ci_scripts" ] && cp -R "$KEEP/ci_scripts" ios/
 (cd ios && pod install)
 
 # Each Xcode Cloud run gets its own build number
