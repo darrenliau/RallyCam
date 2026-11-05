@@ -33,6 +33,13 @@ const KEEP = 10;
 export class ModelTrackFilter {
   private chain: PathPoint[] = [];
   private believed = false;
+  private region: ((x: number, y: number) => boolean) | null = null;
+
+  /** Only sightings inside this (fractions of the frame) count; the others are treated as nothing seen. null = everywhere. */
+  setRegion(region: ((x: number, y: number) => boolean) | null) {
+    this.region = region;
+    this.reset();
+  }
 
   reset() {
     this.chain = [];
@@ -42,7 +49,8 @@ export class ModelTrackFilter {
   push(frames: ModelFrame[]): ShuttleSample[] {
     const out: ShuttleSample[] = [];
     const emit = (p: PathPoint) => out.push({ t: p.t, x: p.x / W, y: p.y / H });
-    for (const f of frames) {
+    for (const f0 of frames) {
+      const f: ModelFrame = f0.x !== undefined && f0.y !== undefined && this.region && !this.region(f0.x, f0.y) ? { t: f0.t } : f0;
       const last = this.chain[this.chain.length - 1];
       if (f.x === undefined || f.y === undefined) {
         if (last && f.t - last.t > MAX_GAP_S) this.reset();

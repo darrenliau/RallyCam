@@ -21,6 +21,7 @@ describe('parseSetting', () => {
     expect(parseSetting('experimentalShuttle', '0')).toBe(false);
     expect(parseSetting('shuttleModel', '1')).toBe(true);
     expect(parseSetting('cropModel', '0')).toBe(false);
+    expect(parseSetting('courtOnly', '1')).toBe(true);
     expect(parseSetting('keepAnalysisCopy', '1')).toBe(true);
     expect(parseSetting('keepAnalysisCopy', 'x')).toBeUndefined();
     expect(parseSetting('lens', 'ultra-wide')).toBe('ultra-wide');

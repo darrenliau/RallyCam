@@ -39,18 +39,20 @@ export interface Settings {
   shuttleModel: boolean;
   /** Show the shuttle model only the court and the air above it, so the shuttle is bigger to it. Falls back to the whole frame when the shuttle leaves the crop. */
   cropModel: boolean;
+  /** Follow the shuttle only over the aligned court, not on the courts beside it. */
+  courtOnly: boolean;
   /** Also keep a clean, smaller copy of each game with no overlay, for analysing the shuttle afterwards (iPhone only). */
   keepAnalysisCopy: boolean;
   /** The lens last used, so the saved court lines still fit next time. */
   lens: Lens;
 }
 
-export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, shuttleModel: false, cropModel: true, keepAnalysisCopy: false, lens: 'auto' };
+export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, shuttleModel: false, cropModel: true, courtOnly: true, keepAnalysisCopy: false, lens: 'auto' };
 
 /** Reads one stored value back into the right type, ignoring anything unexpected. */
 export function parseSetting<K extends keyof Settings>(key: K, raw: string): Settings[K] | undefined {
   if (key === 'quality') return (raw in QUALITY ? raw : undefined) as Settings[K] | undefined;
-  if (key === 'guideSeen' || key === 'experimentalShuttle' || key === 'shuttleModel' || key === 'cropModel' || key === 'keepAnalysisCopy') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
+  if (key === 'guideSeen' || key === 'experimentalShuttle' || key === 'shuttleModel' || key === 'cropModel' || key === 'courtOnly' || key === 'keepAnalysisCopy') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
   if (key === 'lens') return ((LENSES as string[]).includes(raw) ? raw : undefined) as Settings[K] | undefined;
   return undefined;
 }

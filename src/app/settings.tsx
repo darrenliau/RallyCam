@@ -79,6 +79,17 @@ export default function Settings() {
               <Switch value={settings.cropModel} onValueChange={(v) => updateSettings({ cropModel: v })} accessibilityLabel="Crop the shuttle model to the court" />
             </View>
           )}
+          {EXPERIMENTS && settings.shuttleModel && (
+            <View style={s.row}>
+              <View style={{ flex: 1 }}>
+                <Label>Only this court · experimental</Label>
+                <Text style={s.muted}>
+                  Ignores shuttles that are not over the court you aligned, so the courts beside it do not count. Turn it off if shuttles on your own court are being missed.
+                </Text>
+              </View>
+              <Switch value={settings.courtOnly} onValueChange={(v) => updateSettings({ courtOnly: v })} accessibilityLabel="Follow the shuttle only over this court" />
+            </View>
+          )}
         </Card>
       )}
 

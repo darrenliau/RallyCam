@@ -34,6 +34,7 @@ import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
 import { courtOfServer, inferWinnerFromServe } from '../analysis/nextServe';
 import { CropGuard } from '../analysis/cropGuard';
+import { courtRegion } from '../analysis/courtRegion';
 import { ModelTrackFilter } from '../analysis/modelTrack';
 import { PlayerMotion } from '../analysis/playerMotion';
 import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
@@ -361,6 +362,8 @@ export default function Record() {
   // Looking only at the court: the guard says when to look at the whole frame instead
   const cropGuard = useRef(new CropGuard()).current;
   const viewFull = useRef(false);
+  // Only sightings over the aligned court count
+  const regionRef = useRef<((x: number, y: number) => boolean) | null>(null);
   const modelMs = useRef(0);
   const lastShuttleT = useRef(0);
   const trailFrame = useRef<{ x: number; y: number }[]>([]);
@@ -451,7 +454,7 @@ export default function Record() {
       lastShuttleT.current = e.frames[e.frames.length - 1].t;
       modelMs.current = e.predictMs;
       for (const sample of modelFilter.push(e.frames)) estimator.push(sample);
-      const full = cropGuard.push(e.frames);
+      const full = cropGuard.push(regionRef.current ? e.frames.map((f) => (f.x !== undefined && f.y !== undefined && !regionRef.current!(f.x, f.y) ? { t: f.t } : f)) : e.frames);
       if (full !== viewFull.current) { viewFull.current = full; native.setShuttleModelFull(full); }
     });
     return () => { sub.remove(); clearInterval(id); native.setShuttleModel(false); modelFilter.reset(); setModelStatus(null); };
@@ -563,7 +566,7 @@ export default function Record() {
       const modelLine = () => {
         if (!modelWanted) return 'shuttle model: off';
         const m = native.getShuttleModelStatus();
-        return `shuttle model: ${m.state}${m.problem ? ` (${m.problem})` : ''}, ${m.predictMs.toFixed(0)} ms a window, ${m.detections} sightings, ${m.windows} windows, ${m.windowsDropped} dropped, ${m.framesDropped} frames dropped${modelActive ? ', simple tracker off' : ', simple tracker running'}, looking at ${!settings.cropModel ? 'the whole frame (crop off)' : viewFull.current ? 'the whole frame (shuttle left the crop)' : 'the court crop'}`;
+        return `shuttle model: ${m.state}${m.problem ? ` (${m.problem})` : ''}, ${m.predictMs.toFixed(0)} ms a window, ${m.detections} sightings, ${m.windows} windows, ${m.windowsDropped} dropped, ${m.framesDropped} frames dropped${modelActive ? ', simple tracker off' : ', simple tracker running'}, court gate ${regionRef.current ? 'on' : 'off'}, looking at ${!settings.cropModel ? 'the whole frame (crop off)' : viewFull.current ? 'the whole frame (shuttle left the crop)' : 'the court crop'}`;
       };
       const t = tally.current;
       const act = motion.activity(Date.now() / 1000, 1.5);
@@ -585,6 +588,13 @@ export default function Record() {
     return () => { native.setShuttleModelCrop(0, 0, 0, 0); native.setShuttleModelFull(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [modelWanted, aligning, corners, width, height, settings.cropModel]);
+
+  useEffect(() => {
+    const region = aligning || !settings.courtOnly ? null : courtRegion(cornersToFrame(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height }));
+    regionRef.current = region;
+    modelFilter.setRegion(region);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aligning, corners, width, height, settings.courtOnly]);
 
   useEffect(() => {
     if (keepEstimatorOnce.current) {

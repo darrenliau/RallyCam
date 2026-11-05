@@ -88,3 +88,15 @@ describe('ModelTrackFilter', () => {
     expect(() => f.push(lob(0, 3))).not.toThrow();
   });
 });
+
+describe('ModelTrackFilter region', () => {
+  it('ignores a flight that is outside the region', () => {
+    const flight = (x0: number) => Array.from({ length: 16 }, (_, i) => ({ t: i / 60, x: x0 + i * 0.004, y: 0.4 + 0.1 * Math.sin(i / 5) }));
+    const open = new ModelTrackFilter();
+    expect(open.push(flight(0.7)).length).toBeGreaterThan(0);
+    const gated = new ModelTrackFilter();
+    gated.setRegion((x) => x < 0.5);
+    expect(gated.push(flight(0.7))).toEqual([]);
+    expect(gated.push(flight(0.1).map((f) => ({ ...f, t: f.t + 1 }))).length).toBeGreaterThan(0);
+  });
+});
