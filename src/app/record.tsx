@@ -49,7 +49,12 @@ const savedCorners: Record<string, Corners> = {};
 export default function Record() {
   useKeepAwake();
   const insets = useSafeAreaInsets();
-  const { width, height } = useWindowDimensions();
+  const win = useWindowDimensions();
+  // While the game is being ended the phone turns back to portrait. The screen is covered then and its size is kept, so the landscape layout is never squeezed into a portrait window.
+  const [ending, setEnding] = useState(false);
+  const lastLandscape = useRef(win);
+  if (win.width > win.height) lastLandscape.current = win;
+  const { width, height } = ending ? lastLandscape.current : win;
   const { config: raw, venueId, capture } = useLocalSearchParams<{ config: string; venueId?: string; capture?: string }>();
   // Footage capture: 120 frames per second and nothing drawn on the picture, for collecting shuttle-tracking footage.
   const footage = capture === '1';
@@ -85,7 +90,6 @@ export default function Record() {
   const [lensChanged, setLensChanged] = useState(false);
   const lensRestored = useRef(false);
   const findCourtRef = useRef<() => void>(() => {});
-  const [ending, setEnding] = useState(false);
   const [pausedBecause, setPausedBecause] = useState<string | null>(null);
   const [pressure, setPressure] = useState('nominal');
 
@@ -710,9 +714,19 @@ export default function Record() {
   const onUndo = () => { nextServe.current = null; persist(undoLast(state)); };
 
   const endingRef = useRef(false);
+  // Cover the screen, turn the phone to portrait and wait for it to finish turning, then leave. Leaving first would show the landscape
+  // screen squeezed while it turned.
+  const leaveTo = async (go: () => void) => {
+    setEnding(true);
+    await new Promise((r) => setTimeout(r, 60));          // let the cover be drawn
+    await ScreenOrientation.lockAsync(ScreenOrientation.OrientationLock.PORTRAIT_UP).catch(() => {});
+    await new Promise((r) => setTimeout(r, 350));         // the turn itself
+    go();
+  };
+  const goBack = () => { if (endingRef.current) return; endingRef.current = true; leaveTo(() => router.back()); };
   const endMatch = async () => {
     if (endingRef.current) return;
-    if (!recordingStarted.current && state.rallies.length === 0) { router.back(); return; } // nothing was recorded
+    if (!recordingStarted.current && state.rallies.length === 0) { goBack(); return; } // nothing was recorded
     endingRef.current = true;
     setEnding(true);
     const uri = await recorder.current?.stop().catch((e) => { setRecError(`The video could not be finished: ${e?.message ?? e}`); return undefined; });
@@ -738,7 +752,7 @@ export default function Record() {
     const baked = kept != null && recorder.current?.bakesOverlay === true && !footage;
     if (baked) await setOverlayVideo(id, kept);
     // Otherwise, on an iPhone dev build, Review makes the video with the overlay drawn in right away
-    router.replace({ pathname: '/match/[id]', params: { id, ...(kept && !baked && !footage && canExportOnDevice ? { export: '1' } : {}) } });
+    await leaveTo(() => router.replace({ pathname: '/match/[id]', params: { id, ...(kept && !baked && !footage && canExportOnDevice ? { export: '1' } : {}) } }));
   };
 
   // A game is over at 21 (win by 2, capped at 30). Stop recording a moment later so the final score is seen.
@@ -813,7 +827,7 @@ export default function Record() {
       <View style={[s.chipRow, { left: L, top: T }]} pointerEvents="box-none">
         {aligning && !recording && (
           // only until recording starts: after that, leaving means ending the game with End game
-          <Pressable style={s.chip} onPress={() => router.back()} accessibilityRole="button" accessibilityLabel="Back">
+          <Pressable style={s.chip} onPress={goBack} accessibilityRole="button" accessibilityLabel="Back">
             <Text style={s.chipText}>‹ Back</Text>
           </Pressable>
         )}
@@ -930,12 +944,19 @@ export default function Record() {
         // drawn last so a corner is never hidden behind another control
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
       )}
+      {ending && (
+        // covers everything while the phone turns back to portrait
+        <View style={[StyleSheet.absoluteFill, s.cover]} pointerEvents="auto">
+          <Text style={s.h}>Saving…</Text>
+        </View>
+      )}
     </View>
   );
 }
 
 const s = StyleSheet.create({
   fill: { flex: 1, backgroundColor: colors.bg },
+  cover: { backgroundColor: colors.bg, alignItems: 'center', justifyContent: 'center', zIndex: 100 },
   center: { justifyContent: 'center' },
   h: { color: colors.text, fontSize: 22, fontWeight: '700' },
   muted: { color: colors.muted, fontSize: 14 },
