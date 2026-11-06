@@ -15,7 +15,7 @@ public class RallyCamCapturePreview: ExpoView {
     NotificationCenter.default.addObserver(self, selector: #selector(cameraChanged), name: CaptureController.cameraChanged, object: nil)
   }
 
-  @objc private func cameraChanged() { turnLandscape() }
+  @objc private func cameraChanged() { turnLandscape(); setNeedsLayout() }
 
   deinit { NotificationCenter.default.removeObserver(self) }
 

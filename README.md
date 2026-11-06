@@ -272,3 +272,6 @@ Real-hall clips (two halls, several courts in view) showed the model following s
 
 ## End game: no squeezed screen
 Tapping End game used to turn the phone to portrait while the landscape Record screen was still showing, and at random the layout was squeezed (found in TestFlight). Now the screen is covered with "Saving…", its size is frozen, the phone turns to portrait and finishes turning, and only then does the app go to Review (`leaveTo` in `src/app/record.tsx`). The Back button before recording does the same. Not yet tried on a phone.
+
+## Camera started in portrait
+At the start of a game the picture could stay in portrait while the screen was already landscape: the preview only turned its camera connection landscape when the view next laid out, which could happen before the session had its camera input (no connection yet). `configureAndRun` in `CaptureController.swift` now posts `cameraChanged` right after the session runs and again 0.6 s later (once the screen has finished turning), and refreshes the output's orientation then. Swift, so only an Xcode / TestFlight build can confirm it.

@@ -240,6 +240,16 @@ final class CaptureController: NSObject {
     observeSession()
     if !session.isRunning { session.startRunning() }
     NSLog("RallyCam: camera session running = \(session.isRunning), \(fps) fps, lens \(lens)")
+    // The preview has no camera connection until the session has its input, and new connections start in portrait. The preview
+    // only turned them landscape when its view next laid out, which could be before the camera was ready. So tell it now, and once
+    // more when the screen has finished turning to landscape.
+    DispatchQueue.main.async {
+      NotificationCenter.default.post(name: CaptureController.cameraChanged, object: nil)
+      DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+        NotificationCenter.default.post(name: CaptureController.cameraChanged, object: nil)
+        self.refreshOrientation()
+      }
+    }
     return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens)
   }
 
