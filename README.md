@@ -144,7 +144,7 @@ Any of these needs a development build and a re-encode, which takes time and qua
 ## Settings, guide and recovery
 
 - **Settings** (from the Games tab): video quality (Standard / High / Best, with MB per minute and free space shown), delete saved videos, replay the first-run guide, and the experimental shuttle switch.
-- **First-run guide:** shown once, reopenable from Settings.
+- **First-run guide:** five tips (phone position, Game or Training, court lines, automatic points, after the game), shown once and reopenable from Settings. Swipe left or right to move between tips.
 - **Recovery:** games cut off by a call, crash or full storage are finished at the next app start from the points and video already saved. Empty games are removed.
 
 ## Experimental shuttle tracker

@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
-import { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import { useMemo, useState } from 'react';
+import { PanResponder, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Line, Path, Rect, Text as SvgText } from 'react-native-svg';
 import { Button } from '../components/ui';
@@ -28,10 +28,11 @@ function SetupDiagram() {
 }
 
 const PAGES = [
-  { title: 'Put the phone behind the court', body: 'Use a tripod behind one baseline, about 1.5 to 2 metres high and in the middle. Hold the phone in landscape. All four outer corners of the court must be in view.', diagram: true },
-  { title: 'Name the players and start', body: 'Choose singles or doubles and type the names. Pick a venue so RallyCam remembers where the court is next time.', diagram: false },
-  { title: 'Line up the court', body: 'Drag the four dots onto the outer corners of the court, then tap Lock court. Recording starts when you lock it. Do not turn the phone or move the tripod during the game.', diagram: false },
-  { title: 'Tap the winner of each point', body: 'After every point tap the button with the winner\'s name. Tapped the wrong one? Use Fix last point. The game stops by itself at 21, and the video already has the score, player tags and distance in it.', diagram: false },
+  { title: 'Put the phone behind the court', body: 'Use a tripod behind one baseline, about 1.5 to 2 metres high and in the middle. Hold the phone in landscape. All four outer corners of the court must be in view. In a hall with several courts, aim at yours and keep it in the middle of the picture.', diagram: true },
+  { title: 'Choose Game or Training', body: 'Game keeps the score for you. Training follows the players and the shuttle but keeps no score. Choose singles or doubles, type the names, and pick a venue so RallyCam remembers where the court is.', diagram: false },
+  { title: 'Line up the court', body: 'RallyCam draws the court lines from the camera. Drag any dot that is off onto its corner, then tap Lock court. Recording starts when you lock it. Do not turn the phone or move the tripod during the game.', diagram: false },
+  { title: 'Points are automatic', body: 'In a Game, RallyCam watches the shuttle and gives each point. If one is wrong, tap Wrong, swap, or use Fix last point. The + buttons still add a point by hand. The game stops by itself at 21. In Training, tap End session when you are done.', diagram: false },
+  { title: 'After the game', body: 'The video has the score, player tags, court map and distance drawn in. Review shows every point and flags the ones RallyCam was unsure about. It also keeps a clean copy of the video and the shuttle log, which you can share.', diagram: false },
 ];
 
 export default function Guide() {
@@ -40,13 +41,22 @@ export default function Guide() {
   const last = page === PAGES.length - 1;
   const p = PAGES[page];
 
+  // Swipe left for the next tip and right for the previous one. Only mostly sideways drags count, so swiping down still closes the screen.
+  const swipe = useMemo(() => PanResponder.create({
+    onMoveShouldSetPanResponder: (_, g) => Math.abs(g.dx) > 10 && Math.abs(g.dx) > 1.5 * Math.abs(g.dy),
+    onPanResponderRelease: (_, g) => {
+      if (g.dx < -50) setPage((n) => Math.min(n + 1, PAGES.length - 1));
+      else if (g.dx > 50) setPage((n) => Math.max(n - 1, 0));
+    },
+  }), []);
+
   const done = async () => {
     await updateSettings({ guideSeen: true });
     router.back();
   };
 
   return (
-    <View style={[s.wrap, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]}>
+    <View style={[s.wrap, { paddingTop: insets.top + 16, paddingBottom: insets.bottom + 16 }]} {...swipe.panHandlers}>
       <Text style={s.step}>{page + 1} of {PAGES.length}</Text>
       <Text style={s.title}>{p.title}</Text>
       {p.diagram && <SetupDiagram />}
