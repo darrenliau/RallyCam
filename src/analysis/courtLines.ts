@@ -28,6 +28,10 @@ const SEGMENTS: [number, number, number, number][] = [
   [0, LONG_BACK, 1, LONG_BACK], [0, 1 - LONG_BACK, 1, 1 - LONG_BACK],           // doubles long service lines
   [0.5, 0.5 - SHORT, 0.5, LONG_BACK], [0.5, 0.5 + SHORT, 0.5, 1 - LONG_BACK],   // centre lines
 ];
+/** How much a court far from the middle of the picture is marked down (0 to 1): the court being filmed is usually in the middle. */
+const CENTRE_BIAS = 0.4;
+/** Two courts closer than this (picture widths, see courtDistance) are the same candidate. */
+const DISTINCT = 0.05;
 const OUTER = 4; // the first four segments are the outer lines
 
 interface Line { a: number; b: number; c: number; angle: number; votes: number }  // ax + by + c = 0 with a, b normalised, angle from horizontal (0..90)
@@ -213,13 +217,21 @@ function outerCorners(left: Line, right: Line, upper: Line, lower: Line, uL: num
  * A starting point for the user to correct, never the last word.
  */
 export function findCourt(img: LumaImage, options: FindOptions = {}): CourtFit | null {
+  return findCourts(img, options, 1)[0] ?? null;
+}
+
+/**
+ * Like findCourt, but up to `count` different courts, best first (courts that are nearly the same are only listed once). In a hall
+ * with several courts the right one is not always the best match, so the user can step through the others.
+ */
+export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3): CourtFit[] {
   const { width: w, height: h } = img;
   const mask = lineMask(img, options.skipTop ?? 0.38, options.ignore);
   const lines = houghLines(mask, w, h, 44);
   // baselines and service lines run roughly across the picture, side lines run away from the camera. Only the strongest of each are tried.
   const across = lines.filter((l) => l.angle < 28).slice(0, 14);
   const along = lines.filter((l) => l.angle >= 22).slice(0, 10);
-  if (across.length < 2 || along.length < 2) return null;
+  if (across.length < 2 || along.length < 2) return [];
   const near = dilate(mask, w, h, 2);
   const stamp = new Int32Array(w * h);
   let gen = 0;
@@ -242,7 +254,7 @@ export function findCourt(img: LumaImage, options: FindOptions = {}): CourtFit |
         const sc = rate(c, true);
         const mid = { x: (c.farLeft.x + c.farRight.x + c.nearRight.x + c.nearLeft.x) / 4, y: (c.farLeft.y + c.farRight.y + c.nearRight.y + c.nearLeft.y) / 4 };
         const away = Math.hypot(mid.x - centre.x, mid.y - centre.y) / w;
-        const v = sc.value * (1 - 0.25 * Math.min(1, away));
+        const v = sc.value * (1 - CENTRE_BIAS * Math.min(1, away));
         if (shortlist.length < keep) shortlist.push({ c, v });
         else {
           let worst = 0;
@@ -252,11 +264,12 @@ export function findCourt(img: LumaImage, options: FindOptions = {}): CourtFit |
       }
     }
   }
-  if (!shortlist.length) return null;
+  if (!shortlist.length) return [];
 
   // Look closely at the best few, and nudge each corner a pixel or two at a time while the fit improves
   const keys = ['farLeft', 'farRight', 'nearRight', 'nearLeft'] as const;
-  let best: { corners: Corners; value: number } | null = null;
+  const f = (p: Pt): Pt => ({ x: p.x / w, y: p.y / h });
+  const found: { fit: CourtFit; rank: number }[] = [];
   for (const cand of shortlist) {
     let corners = cand.c;
     let current = rate(corners).value;
@@ -270,15 +283,26 @@ export function findCourt(img: LumaImage, options: FindOptions = {}): CourtFit |
       }
       if (!improved) break;
     }
-    if (!best || current > best.value) best = { corners, value: current };
+    const final = rate(corners);
+    if (final.hitShare < 0.3) continue;
+    const mid = { x: (corners.farLeft.x + corners.farRight.x + corners.nearRight.x + corners.nearLeft.x) / 4, y: (corners.farLeft.y + corners.farRight.y + corners.nearRight.y + corners.nearLeft.y) / 4 };
+    const away = Math.hypot(mid.x - centre.x, mid.y - centre.y) / w;
+    found.push({
+      fit: {
+        corners: { farLeft: f(corners.farLeft), farRight: f(corners.farRight), nearRight: f(corners.nearRight), nearLeft: f(corners.nearLeft) },
+        confidence: Math.max(0, Math.min(1, (final.hitShare - 0.3) / 0.4)),
+      },
+      rank: current * (1 - CENTRE_BIAS * Math.min(1, away)),
+    });
   }
-  if (!best) return null;
-  const final = rate(best.corners);
-  if (final.hitShare < 0.3) return null;
-  const confidence = Math.max(0, Math.min(1, (final.hitShare - 0.3) / 0.4));
-  const f = (p: Pt): Pt => ({ x: p.x / w, y: p.y / h });
-  const c = best.corners;
-  return { corners: { farLeft: f(c.farLeft), farRight: f(c.farRight), nearRight: f(c.nearRight), nearLeft: f(c.nearLeft) }, confidence };
+  found.sort((a, b) => b.rank - a.rank);
+  // courts that are nearly the same are one candidate
+  const out: CourtFit[] = [];
+  for (const { fit } of found) {
+    if (out.every((o) => courtDistance(o.corners, fit.corners) > DISTINCT)) out.push(fit);
+    if (out.length >= count) break;
+  }
+  return out;
 }
 
 /** For the tools that draw what the finder sees. */

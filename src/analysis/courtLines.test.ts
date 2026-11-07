@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consensusCourt, courtDistance, findCourt, type CourtFit, type LumaImage } from './courtLines';
+import { consensusCourt, courtDistance, findCourt, findCourts, type CourtFit, type LumaImage } from './courtLines';
 import { courtMap, type Corners } from './court';
 
 const W = 640;
@@ -58,6 +58,20 @@ describe('findCourt', () => {
     const data = new Uint8Array(W * H).fill(90);
     for (let i = 0; i < data.length; i++) data[i] += (i * 7919) % 11;
     expect(findCourt({ data, width: W, height: H })).toBeNull();
+  });
+});
+
+describe('findCourts', () => {
+  it('lists the best court first, the same one findCourt gives, and no two nearly alike', () => {
+    const img = render(truth);
+    const list = findCourts(img, {}, 3);
+    expect(list.length).toBeGreaterThan(0);
+    expect(list.length).toBeLessThanOrEqual(3);
+    expect(list[0].corners).toEqual(findCourt(img)!.corners);
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) expect(courtDistance(list[i].corners, list[j].corners)).toBeGreaterThan(0.05);
+  });
+  it('is empty for a picture with no court', () => {
+    expect(findCourts({ data: new Uint8Array(W * H).fill(60), width: W, height: H }, {}, 3)).toEqual([]);
   });
 });
 

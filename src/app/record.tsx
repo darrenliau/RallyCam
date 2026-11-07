@@ -29,7 +29,7 @@ import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, 
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { decodeBase64 } from '../analysis/base64';
-import { consensusCourt, findCourt, type CourtFit } from '../analysis/courtLines';
+import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../analysis/courtLines';
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
 import { courtOfServer, inferWinnerFromServe } from '../analysis/nextServe';
@@ -252,25 +252,50 @@ export default function Record() {
   // Drawing the court from the camera: a few pictures a moment apart, the lines found in each, the best agreeing one kept as the starting corners.
   const [courtFinder, setCourtFinder] = useState<'idle' | 'finding' | 'found' | 'failed'>('idle');
   const finderBusy = useRef(false);
+  // Every court the finder came up with (best first), so a wrong first guess can be swapped for the next one
+  const courtOptions = useRef<CourtFit[]>([]);
+  const [optionNo, setOptionNo] = useState(0);
+  const [optionCount, setOptionCount] = useState(0);
+  const showOption = useCallback((fit: CourtFit) => {
+    const g = { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height };
+    const to = (p: { x: number; y: number }) => frameToScreen(p, g);
+    setDragged({ farLeft: to(fit.corners.farLeft), farRight: to(fit.corners.farRight), nearRight: to(fit.corners.nearRight), nearLeft: to(fit.corners.nearLeft) });
+  }, []);
+  const nextOption = () => {
+    const list = courtOptions.current;
+    if (list.length < 2) return;
+    const n = (optionNo + 1) % list.length;
+    setOptionNo(n);
+    showOption(list[n]);
+  };
   const findCourtNow = useCallback(async () => {
     const native = Capture;
     if (!native || finderBusy.current) return;
     finderBusy.current = true;
     setCourtFinder('finding');
     try {
-      const fits: CourtFit[] = [];
+      const tops: CourtFit[] = [];
+      const others: CourtFit[] = [];
       for (let i = 0; i < 3; i++) {
         if (i) await new Promise((r) => setTimeout(r, 400));
         const still = await native.grabStill(640);
         await new Promise((r) => setTimeout(r, 0)); // let the screen update between pictures
-        const fit = findCourt({ data: decodeBase64(still.data), width: still.width, height: still.height });
-        if (fit) fits.push(fit);
+        const list = findCourts({ data: decodeBase64(still.data), width: still.width, height: still.height }, {}, 3);
+        if (list[0]) tops.push(list[0]);
+        others.push(...list.slice(1));
       }
-      const best = consensusCourt(fits);
+      const best = consensusCourt(tops);
       if (best && best.confidence >= 0.3) {
-        const g = { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height };
-        const to = (p: { x: number; y: number }) => frameToScreen(p, g);
-        setDragged({ farLeft: to(best.corners.farLeft), farRight: to(best.corners.farRight), nearRight: to(best.corners.nearRight), nearLeft: to(best.corners.nearLeft) });
+        // the best guess first, then the other courts that were found, each listed once
+        const options = [best];
+        for (const f of others.sort((a, b) => b.confidence - a.confidence)) {
+          if (options.every((o) => courtDistance(o.corners, f.corners) > 0.05)) options.push(f);
+          if (options.length >= 4) break;
+        }
+        courtOptions.current = options;
+        setOptionNo(0);
+        setOptionCount(options.length);
+        showOption(best);
         setCourtFinder('found');
       } else {
         setCourtFinder('failed');
@@ -834,6 +859,11 @@ export default function Record() {
         {aligning && !recording && usesNativeCapture && (
           <Pressable style={s.chip} onPress={() => { findCourtNow(); }} disabled={courtFinder === 'finding'} accessibilityRole="button" accessibilityLabel="Find the court lines">
             <Text style={s.chipText}>{courtFinder === 'finding' ? 'Looking…' : 'Find court'}</Text>
+          </Pressable>
+        )}
+        {aligning && !recording && usesNativeCapture && courtFinder === 'found' && optionCount > 1 && (
+          <Pressable style={s.chip} onPress={nextOption} accessibilityRole="button" accessibilityLabel="Try another court">
+            <Text style={s.chipText}>Try another ({optionNo + 1}/{optionCount})</Text>
           </Pressable>
         )}
         {aligning && !recording && lensInfo && lensInfo.available.length > 1 && (
