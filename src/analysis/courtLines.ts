@@ -32,6 +32,8 @@ const SEGMENTS: [number, number, number, number][] = [
 const CENTRE_BIAS = 0.4;
 /** Two courts closer than this (picture widths, see courtDistance) are the same candidate. */
 const DISTINCT = 0.05;
+/** Side lines are lines at least this steep (degrees from horizontal). A wide lens makes them shallower than the 22 degrees this used to be. */
+const ALONG_MIN_ANGLE = 8;
 const OUTER = 4; // the first four segments are the outer lines
 
 interface Line { a: number; b: number; c: number; angle: number; votes: number }  // ax + by + c = 0 with a, b normalised, angle from horizontal (0..90)
@@ -165,7 +167,7 @@ function plausible(c: Corners, w: number, h: number): boolean {
  * (so a squashed court, whose lines all fall on the same pixels, cannot win by repeating them): a pixel on a white mark scores +1,
  * one that is not scores -0.4. Only the part of the lines inside the picture counts.
  */
-function score(c: Corners, near: Uint8Array, w: number, h: number, stamp: Int32Array, gen: number, step = 1.5): { value: number; outerHit: number; hitShare: number } {
+function score(c: Corners, near: Uint8Array, w: number, h: number, stamp: Int32Array, gen: number, step = 1.5, blank?: Uint8Array): { value: number; outerHit: number; hitShare: number } {
   const map = courtMap(c);
   let value = 0, hit = 0, total = 0, outerHit = 0, outerTotal = 0;
   for (let s = 0; s < SEGMENTS.length; s++) {
@@ -182,6 +184,7 @@ function score(c: Corners, near: Uint8Array, w: number, h: number, stamp: Int32A
       const i = y * w + x;
       if (stamp[i] === gen) continue;
       stamp[i] = gen;
+      if (blank && blank[i]) continue; // covered by something drawn over the picture: no evidence either way
       total++;
       const on = near[i] === 1;
       if (on) { value += 1; hit++; } else value -= 0.4;
@@ -234,12 +237,19 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
   const lines = houghLines(mask, w, h, 44);
   // baselines and service lines run roughly across the picture, side lines run away from the camera. Only the strongest of each are tried.
   const across = lines.filter((l) => l.angle < 28).slice(0, 14);
-  const along = lines.filter((l) => l.angle >= 22).slice(0, 10);
+  // with a wide lens or a low camera the side lines run at a shallow angle, so the two families overlap
+  const along = lines.filter((l) => l.angle >= ALONG_MIN_ANGLE).slice(0, 12);
   if (across.length < 2 || along.length < 2) return [];
   const near = dilate(mask, w, h, 2);
   const stamp = new Int32Array(w * h);
   let gen = 0;
-  const rate = (c: Corners, coarse = false) => score(c, near, w, h, stamp, ++gen, coarse ? 7 : 1.5);
+  // places the finder was told to ignore say nothing about the court, so a line that runs through them is neither right nor wrong there
+  let blank: Uint8Array | undefined;
+  if (options.ignore?.length) {
+    blank = new Uint8Array(w * h);
+    for (const [a, b, c2, d] of options.ignore) for (let y = Math.max(0, Math.floor(b * h)); y < Math.min(h, Math.ceil(d * h)); y++) for (let x = Math.max(0, Math.floor(a * w)); x < Math.min(w, Math.ceil(c2 * w)); x++) blank[y * w + x] = 1;
+  }
+  const rate = (c: Corners, coarse = false) => score(c, near, w, h, stamp, ++gen, coarse ? 7 : 1.5, blank);
 
   const xAt = (l: Line, y: number) => (-l.c - l.b * y) / (Math.abs(l.a) < 1e-9 ? 1e-9 : l.a);
   const yAt = (l: Line, x: number) => (-l.c - l.a * x) / (Math.abs(l.b) < 1e-9 ? 1e-9 : l.b);
@@ -310,7 +320,7 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
 }
 
 /** For the tools that draw what the finder sees. */
-export const internals = { lineMask, houghLines, dilate };
+export const internals = { lineMask, houghLines, dilate, score, plausible };
 
 const KEYS = ['farLeft', 'farRight', 'nearRight', 'nearLeft'] as const;
 

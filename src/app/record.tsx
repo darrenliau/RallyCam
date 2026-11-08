@@ -256,6 +256,16 @@ export default function Record() {
   const courtOptions = useRef<CourtFit[]>([]);
   const [optionNo, setOptionNo] = useState(0);
   const [optionCount, setOptionCount] = useState(0);
+  // "Tap the corners": the four corners tapped so far (null when not tapping). For halls the finder cannot read, such as a camera at the side.
+  const [tapPoints, setTapPoints] = useState<{ x: number; y: number }[] | null>(null);
+  const tapCorner = (x: number, y: number) => {
+    const next = [...(tapPoints ?? []), { x, y }];
+    if (next.length < 4) { setTapPoints(next); return; }
+    setDragged({ farLeft: next[0], farRight: next[1], nearRight: next[2], nearLeft: next[3] });
+    setCourtFinder('idle');
+    setOptionCount(0);
+    setTapPoints(null);
+  };
   const [courtSure, setCourtSure] = useState(true);   // false: the finder was not sure, so say it is only a guess
   const showOption = useCallback((fit: CourtFit) => {
     const g = { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height };
@@ -863,6 +873,11 @@ export default function Record() {
             <Text style={s.chipText}>{courtFinder === 'finding' ? 'Looking…' : 'Find court'}</Text>
           </Pressable>
         )}
+        {aligning && !recording && (
+          <Pressable style={s.chip} onPress={() => setTapPoints(tapPoints ? null : [])} accessibilityRole="button" accessibilityLabel="Tap the four court corners">
+            <Text style={s.chipText}>{tapPoints ? 'Cancel tapping' : 'Tap corners'}</Text>
+          </Pressable>
+        )}
         {aligning && !recording && usesNativeCapture && courtFinder === 'found' && optionCount > 1 && (
           <Pressable style={s.chip} onPress={nextOption} accessibilityRole="button" accessibilityLabel="Try another court">
             <Text style={s.chipText}>Try another ({optionNo + 1}/{optionCount})</Text>
@@ -932,7 +947,7 @@ export default function Record() {
         </View>
       )}
 
-      {venueLoaded && aligning && (
+      {venueLoaded && aligning && !tapPoints && (
         <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
           <Text style={s.bannerText}>
             {courtFinder === 'finding' ? 'Looking for the court lines… ' : courtFinder === 'found' ? (courtSure ? 'We drew the court from the camera. Drag any dot that is off onto its corner, then lock it. ' : 'This is only a guess at the court. Check every dot and drag it onto its corner, or tap Try another. ') : courtFinder === 'failed' ? 'We could not find the court lines. Drag the four dots onto the corners of the court. ' : lensChanged ? 'The lens changed, so the court looks different. Drag the four dots onto the corners again. ' : staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
@@ -972,9 +987,30 @@ export default function Record() {
         <Button label={training ? 'End session' : state.matchWinner ? 'Finish now' : 'End game'} onPress={endMatch} disabled={ending} />
       </View>
       )}
-      {venueLoaded && aligning && (
+      {venueLoaded && aligning && !tapPoints && (
         // drawn last so a corner is never hidden behind another control
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
+      )}
+      {aligning && tapPoints && (
+        // taps anywhere below the buttons place the next corner
+        <>
+          <Pressable
+            style={{ position: 'absolute', left: 0, right: 0, top: T + 48, bottom: 0 }}
+            onPress={(e) => tapCorner(e.nativeEvent.pageX, e.nativeEvent.pageY)}
+            accessibilityLabel="Tap the next court corner"
+          />
+          {tapPoints.map((p, i) => (
+            <View key={i} pointerEvents="none" style={[s.tapDot, { left: p.x - 13, top: p.y - 13 }]}>
+              <Text style={s.tapDotText}>{i + 1}</Text>
+            </View>
+          ))}
+          <View style={[s.banner, { top: T + 52, left: (width - 400) / 2, width: 400 }]} pointerEvents="box-none">
+            <Text style={s.bannerText}>
+              Tap corner {tapPoints.length + 1} of 4: the {['far left', 'far right', 'near right', 'near left'][tapPoints.length]} corner of the court. Far is the end away from you. You can drag the dots afterwards.
+            </Text>
+            {tapPoints.length > 0 && <Button kind="ghost" label="Undo last tap" onPress={() => setTapPoints(tapPoints.slice(0, -1))} />}
+          </View>
+        </>
       )}
       {ending && (
         // covers everything while the phone turns back to portrait
@@ -999,6 +1035,8 @@ const s = StyleSheet.create({
   lensOn: { color: '#C8F04A' },
   lensOff: { opacity: 0.6 },
   chipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
+  tapDot: { position: 'absolute', width: 26, height: 26, borderRadius: 13, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
+  tapDotText: { color: '#05090A', fontWeight: '800', fontSize: 13 },
   banner: { position: 'absolute', gap: 10, backgroundColor: 'rgba(5,9,10,0.85)', borderRadius: 16, padding: 14 },
   suggestRow: { flexDirection: 'row', gap: 8 },
   suggestBtn: { flex: 1 },

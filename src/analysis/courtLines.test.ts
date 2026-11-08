@@ -61,6 +61,19 @@ describe('findCourt', () => {
   });
 });
 
+describe('findCourt with a wide lens', () => {
+  // Marked by hand on a real hall: the side lines run at about 12 degrees and the near corners are far outside the picture
+  const wide: Corners = { farLeft: { x: 0.375, y: 0.6 }, farRight: { x: 0.553, y: 0.6 }, nearRight: { x: 1.062, y: 0.869 }, nearLeft: { x: -0.18, y: 0.869 } };
+  it('finds the far corners of a court whose side lines are shallow', () => {
+    const fit = findCourt(render(wide));
+    expect(fit).not.toBeNull();
+    for (const k of ['farLeft', 'farRight'] as const) {
+      expect(Math.abs(fit!.corners[k].x - wide[k].x)).toBeLessThan(0.04);
+      expect(Math.abs(fit!.corners[k].y - wide[k].y)).toBeLessThan(0.04);
+    }
+  });
+});
+
 describe('findCourts', () => {
   it('lists the best court first, the same one findCourt gives, and no two nearly alike', () => {
     const img = render(truth);

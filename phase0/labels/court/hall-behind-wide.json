@@ -1,0 +1,7 @@
+{
+ "still": "hall-behind-wide.jpg",
+ "note": "Screenshot from the TestFlight build with the app's own court dots painted out. 0.5x lens, behind a baseline in a hall of many courts; the court being filmed is the near one (its far baseline is the thin line at y 0.60; the net higher up belongs to the next court). Truth marked by the user in red; near corners are far outside the picture. Fractions of the picture, read by eye (about 0.01).",
+ "kind": "behind",
+ "corners": {"farLeft": {"x": 0.375, "y": 0.600}, "farRight": {"x": 0.553, "y": 0.600}, "nearRight": {"x": 1.062, "y": 0.869}, "nearLeft": {"x": -0.18, "y": 0.869}},
+ "ignore": [[0, 0, 1, 0.2], [0, 0.38, 0.06, 0.62], [0.26, 0.65, 0.74, 0.93]]
+}

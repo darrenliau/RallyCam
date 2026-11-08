@@ -1,0 +1,7 @@
+{
+ "still": "hall-side-corner.jpg",
+ "note": "Camera at the side of the hall looking diagonally along the court, 0.5x lens. Truth marked by the user in red; the corners are listed clockwise from the left one (not far/near, since this is not a view from behind an end). The finder assumes a camera behind one end of the court and cannot model this view.",
+ "kind": "side",
+ "corners": {"farLeft": {"x": 0.165, "y": 0.404}, "farRight": {"x": 0.373, "y": 0.369}, "nearRight": {"x": 0.790, "y": 0.430}, "nearLeft": {"x": 0.673, "y": 0.796}},
+ "ignore": [[0, 0, 1, 0.2], [0, 0.38, 0.06, 0.62], [0.26, 0.65, 0.74, 0.93]]
+}
