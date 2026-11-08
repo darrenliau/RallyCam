@@ -4,6 +4,13 @@ export type VideoQuality = 'high' | 'balanced' | 'small';
 export type Lens = 'auto' | 'ultra-wide' | 'wide' | 'tele';
 export const LENSES: Lens[] = ['auto', 'ultra-wide', 'wide', 'tele'];
 
+/** The lens after `current` in the phone's list, going back to the first after the last (and to the first if `current` is not in the list). */
+export function nextLensName(available: string[], current: string | undefined): string | undefined {
+  if (!available.length) return undefined;
+  const i = current === undefined ? -1 : available.indexOf(current);
+  return available[(i + 1) % available.length];
+}
+
 /** What to call a lens on screen. */
 export const LENS_LABEL: Record<string, string> = { auto: 'Auto', 'ultra-wide': '0.5×', wide: '1×', tele: 'Tele' };
 

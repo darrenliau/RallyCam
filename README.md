@@ -327,3 +327,6 @@ A watch app that shows a small live picture of what the phone is recording and h
 3. **Controls:** point for either side, undo, swap the last automatic point, end game (with a confirm).
 4. **Polish:** warnings, error states, store requirements.
 **To try phase 0:** pull, run a new Xcode Cloud build; TestFlight on the iPhone should now offer the watch app (it installs on the watch from the Watch app on the phone, or automatically) and open to the RallyCam screen. If the build fails, the first red lines tell whether it is signing for the new bundle id or the plugin.
+
+## Court screen: bigger buttons and one lens button
+Before the court is locked, Back, Find court, Tap corners and Try another were small chips that were hard to hit. They are now a column of large buttons (44 pt high, 15 pt bold text) down the left side under the status chips, so they never sit under the score card; the court's dots are drawn after the column and stay on top. The lens switch is now **one button** that shows the current lens ("⟳ Lens 1×") and goes to the next lens the phone has on each tap, back to the first after the last (`nextLensName` in `src/settingsModel.ts`), disabled while it switches. While tapping corners the column is hidden and Cancel is in the prompt next to Undo. The status chips (recording time, fps, players, Re-align court) are unchanged. Not tried on a phone.

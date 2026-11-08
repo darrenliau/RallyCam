@@ -26,7 +26,7 @@ import { EXPERIMENTS, HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
-import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, updateSettings, useSettings } from '../settings';
+import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, nextLensName, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { decodeBase64 } from '../analysis/base64';
 import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../analysis/courtLines';
@@ -202,6 +202,13 @@ export default function Record() {
       setLensBusy(false);
     }
   }, [lensBusy, lensInfo]);
+
+  // One button for all the lenses: each tap goes to the next one the phone has, and back to the first after the last
+  const nextLens = () => {
+    if (!lensInfo || lensInfo.available.length < 2) return;
+    const next = nextLensName(lensInfo.available, lensInfo.lens);
+    if (next) chooseLens(next);
+  };
 
   // The camera starts before the saved settings are read, so switch to the lens used last time once both are ready
   useEffect(() => {
@@ -870,36 +877,6 @@ export default function Record() {
       )}
 
       <View style={[s.chipRow, { left: L, top: T }]} pointerEvents="box-none">
-        {aligning && !recording && (
-          // only until recording starts: after that, leaving means ending the game with End game
-          <Pressable style={s.chip} onPress={goBack} accessibilityRole="button" accessibilityLabel="Back">
-            <Text style={s.chipText}>‹ Back</Text>
-          </Pressable>
-        )}
-        {aligning && !recording && usesNativeCapture && (
-          <Pressable style={s.chip} onPress={() => { findCourtNow(); }} disabled={courtFinder === 'finding'} accessibilityRole="button" accessibilityLabel="Find the court lines">
-            <Text style={s.chipText}>{courtFinder === 'finding' ? 'Looking…' : 'Find court'}</Text>
-          </Pressable>
-        )}
-        {aligning && !recording && (
-          <Pressable style={s.chip} onPress={() => setTapPoints(tapPoints ? null : [])} accessibilityRole="button" accessibilityLabel="Tap the four court corners">
-            <Text style={s.chipText}>{tapPoints ? 'Cancel tapping' : 'Tap corners'}</Text>
-          </Pressable>
-        )}
-        {aligning && !recording && usesNativeCapture && courtFinder === 'found' && optionCount > 1 && (
-          <Pressable style={s.chip} onPress={nextOption} accessibilityRole="button" accessibilityLabel="Try another court">
-            <Text style={s.chipText}>Try another ({optionNo + 1}/{optionCount})</Text>
-          </Pressable>
-        )}
-        {aligning && !recording && lensInfo && lensInfo.available.length > 1 && (
-          <View style={s.chip} accessibilityLabel="Camera lens">
-            {lensInfo.available.map((name) => (
-              <Pressable key={name} onPress={() => chooseLens(name)} disabled={lensBusy} accessibilityRole="button" accessibilityState={{ selected: lensInfo.lens === name }} accessibilityLabel={`${LENS_LABEL[name] ?? name} lens`}>
-                <Text style={[s.chipText, lensInfo.lens === name ? s.lensOn : s.lensOff]}>{LENS_LABEL[name] ?? name}</Text>
-              </Pressable>
-            ))}
-          </View>
-        )}
         <View style={s.chip}>
           <View style={[s.dot, !recording && { backgroundColor: colors.muted }]} />
           <Text style={s.chipText}>{recError ? 'Not recording' : recording ? formatClock(elapsed) : 'Not recording yet'}</Text>
@@ -996,6 +973,35 @@ export default function Record() {
         <Button label={training ? 'End session' : state.matchWinner ? 'Finish now' : 'End game'} onPress={endMatch} disabled={ending} />
       </View>
       )}
+      {aligning && !recording && !tapPoints && (
+        // The buttons for setting the court up, before it is locked: large enough to hit with a thumb. Stacked on the left so they never
+        // sit under the score card; the court's dots are drawn after this, so they are always on top.
+        <View style={[s.actionCol, { left: L, top: T + 40 }]} pointerEvents="box-none">
+          <Pressable style={s.big} onPress={goBack} accessibilityRole="button" accessibilityLabel="Back">
+            <Text style={s.bigText}>‹ Back</Text>
+          </Pressable>
+          {usesNativeCapture && (
+            <Pressable style={s.big} onPress={() => { findCourtNow(); }} disabled={courtFinder === 'finding'} accessibilityRole="button" accessibilityLabel="Find the court lines">
+              <Text style={s.bigText}>{courtFinder === 'finding' ? 'Looking…' : 'Find court'}</Text>
+            </Pressable>
+          )}
+          {usesNativeCapture && courtFinder === 'found' && optionCount > 1 && (
+            <Pressable style={s.big} onPress={nextOption} accessibilityRole="button" accessibilityLabel="Try another court">
+              <Text style={s.bigText}>Try another ({optionNo + 1}/{optionCount})</Text>
+            </Pressable>
+          )}
+          <Pressable style={s.big} onPress={() => setTapPoints([])} accessibilityRole="button" accessibilityLabel="Tap the four court corners">
+            <Text style={s.bigText}>Tap corners</Text>
+          </Pressable>
+          {lensInfo && lensInfo.available.length > 1 && (
+            // one button that goes to the next lens each time it is tapped, and round to the first after the last
+            <Pressable style={s.big} onPress={nextLens} disabled={lensBusy} accessibilityRole="button" accessibilityLabel={`Camera lens ${LENS_LABEL[lensInfo.lens] ?? lensInfo.lens}. Tap for the next lens.`}>
+              <Text style={s.bigText}>{lensBusy ? 'Switching…' : `⟳ Lens ${LENS_LABEL[lensInfo.lens] ?? lensInfo.lens}`}</Text>
+            </Pressable>
+          )}
+        </View>
+      )}
+
       {venueLoaded && aligning && !tapPoints && (
         // drawn last so a corner is never hidden behind another control
         <CourtAligner corners={corners} onChange={setDragged} width={width} height={height} />
@@ -1017,7 +1023,10 @@ export default function Record() {
             <Text style={s.bannerText}>
               Tap corner {tapPoints.length + 1} of 4: the {['far left', 'far right', 'near right', 'near left'][tapPoints.length]} corner of the court. Far is the end away from you. You can drag the dots afterwards.
             </Text>
-            {tapPoints.length > 0 && <Button kind="ghost" label="Undo last tap" onPress={() => setTapPoints(tapPoints.slice(0, -1))} />}
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              {tapPoints.length > 0 && <Button kind="ghost" label="Undo last tap" onPress={() => setTapPoints(tapPoints.slice(0, -1))} style={{ flex: 1 }} />}
+              <Button kind="ghost" label="Cancel" onPress={() => setTapPoints(null)} style={{ flex: 1 }} />
+            </View>
           </View>
         </>
       )}
@@ -1041,8 +1050,9 @@ const s = StyleSheet.create({
   chip: { flexDirection: 'row', alignItems: 'center', gap: 6, backgroundColor: 'rgba(5,9,10,0.62)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5 },
   chip2: { color: '#fff', fontSize: 12, fontWeight: '600', backgroundColor: 'rgba(5,9,10,0.62)', borderRadius: 99, paddingHorizontal: 10, paddingVertical: 5, overflow: 'hidden' },
   dot: { width: 8, height: 8, borderRadius: 4, backgroundColor: '#FF3B30' },
-  lensOn: { color: '#C8F04A' },
-  lensOff: { opacity: 0.6 },
+  actionCol: { position: 'absolute', gap: 8, alignItems: 'flex-start' },
+  big: { minHeight: 44, justifyContent: 'center', backgroundColor: 'rgba(5,9,10,0.72)', borderRadius: 22, paddingHorizontal: 18, paddingVertical: 10 },
+  bigText: { color: '#fff', fontSize: 15, fontWeight: '700' },
   chipText: { color: '#fff', fontSize: 12, fontWeight: '600' },
   tapDot: { position: 'absolute', width: 26, height: 26, borderRadius: 13, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' },
   tapDotText: { color: '#05090A', fontWeight: '800', fontSize: 13 },
