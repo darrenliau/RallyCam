@@ -256,6 +256,7 @@ export default function Record() {
   const courtOptions = useRef<CourtFit[]>([]);
   const [optionNo, setOptionNo] = useState(0);
   const [optionCount, setOptionCount] = useState(0);
+  const [courtSure, setCourtSure] = useState(true);   // false: the finder was not sure, so say it is only a guess
   const showOption = useCallback((fit: CourtFit) => {
     const g = { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height };
     const to = (p: { x: number; y: number }) => frameToScreen(p, g);
@@ -285,7 +286,7 @@ export default function Record() {
         others.push(...list.slice(1));
       }
       const best = consensusCourt(tops);
-      if (best && best.confidence >= 0.3) {
+      if (best && best.confidence >= 0.5) {
         // the best guess first, then the other courts that were found, each listed once
         const options = [best];
         for (const f of others.sort((a, b) => b.confidence - a.confidence)) {
@@ -295,6 +296,7 @@ export default function Record() {
         courtOptions.current = options;
         setOptionNo(0);
         setOptionCount(options.length);
+        setCourtSure(best.confidence >= 0.8);
         showOption(best);
         setCourtFinder('found');
       } else {
@@ -933,7 +935,7 @@ export default function Record() {
       {venueLoaded && aligning && (
         <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
           <Text style={s.bannerText}>
-            {courtFinder === 'finding' ? 'Looking for the court lines… ' : courtFinder === 'found' ? 'We drew the court from the camera. Drag any dot that is off onto its corner, then lock it. ' : courtFinder === 'failed' ? 'We could not find the court lines. Drag the four dots onto the corners of the court. ' : lensChanged ? 'The lens changed, so the court looks different. Drag the four dots onto the corners again. ' : staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
+            {courtFinder === 'finding' ? 'Looking for the court lines… ' : courtFinder === 'found' ? (courtSure ? 'We drew the court from the camera. Drag any dot that is off onto its corner, then lock it. ' : 'This is only a guess at the court. Check every dot and drag it onto its corner, or tap Try another. ') : courtFinder === 'failed' ? 'We could not find the court lines. Drag the four dots onto the corners of the court. ' : lensChanged ? 'The lens changed, so the court looks different. Drag the four dots onto the corners again. ' : staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
             {venue ? `It is saved for ${venue.name}.` : ''}
           </Text>
           <Button label={recording ? 'Lock court' : 'Lock court and start recording'} onPress={lockCourt} />

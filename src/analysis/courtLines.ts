@@ -150,7 +150,11 @@ function plausible(c: Corners, w: number, h: number): boolean {
   const signs = [cross(fl, fr, nr), cross(fr, nr, nl), cross(nr, nl, fl), cross(nl, fl, fr)];
   if (!(signs.every((s) => s > 0) || signs.every((s) => s < 0))) return false;
   const far = fr.x - fl.x, near = nr.x - nl.x;
-  if (far < 0.04 * w || near < far * 1.05 || near > far * 14) return false;
+  if (far < 0.04 * w || near < far * 1.3 || near > far * 14) return false;
+  // a court seen from behind one end is not a flat strip, not wider than a couple of pictures, and its ends run roughly level
+  if (near > 2.5 * w) return false;
+  if ((nl.y + nr.y) / 2 - (fl.y + fr.y) / 2 < 0.12 * h) return false;
+  if (Math.abs(fr.y - fl.y) > 0.35 * far || Math.abs(nr.y - nl.y) > 0.35 * near) return false;
   // the court fills a good part of the picture: its near edge spans a third of the width at least. Tiny quads are marks on the floor, not the court
   if (near < 0.33 * w) return false;
   return true;
