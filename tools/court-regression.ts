@@ -39,6 +39,27 @@ const rotate = (c: Corners, n: number): Corners => {
   return { farLeft: v[n % 4], farRight: v[(n + 1) % 4], nearRight: v[(n + 2) % 4], nearLeft: v[(n + 3) % 4] };
 };
 
+/**
+ * How far the found court's sides are from the true ones: sample each found side where it is in the picture and measure the distance
+ * to the true side's line, in picture widths. (Measuring along the picture's x axis would punish a shallow line for a tiny vertical slip.)
+ * Catches a side line drawn on the next court, which the outline error can miss when that line leaves the picture soon.
+ */
+const sideError = (found: Corners, truth: Corners, aspect: number) => {
+  const sides: [keyof Corners, keyof Corners][] = [['farLeft', 'nearLeft'], ['farRight', 'nearRight']];
+  let worst = 0;
+  for (const [a, b] of sides) {
+    const ta = truth[a], tb = truth[b];
+    const dx = tb.x - ta.x, dy = (tb.y - ta.y) / aspect, len = Math.hypot(dx, dy);
+    for (let t = 0; t <= 1; t += 0.05) {
+      const x = found[a].x + (found[b].x - found[a].x) * t, y = found[a].y + (found[b].y - found[a].y) * t;
+      if (x < 0 || x > 1 || y < 0 || y > 1) continue;
+      const d = Math.abs((x - ta.x) * dy - ((y - ta.y) / aspect) * dx) / len;
+      worst = Math.max(worst, d);
+    }
+  }
+  return worst;
+};
+
 let closeFirst = 0, total = 0;
 for (const file of readdirSync(DIR).filter((f) => f.endsWith('.json')).sort()) {
   const label = JSON.parse(readFileSync(DIR + file, 'utf8')) as { still: string; kind: string; corners: Corners; ignore: [number, number, number, number][] };
@@ -50,7 +71,7 @@ for (const file of readdirSync(DIR).filter((f) => f.endsWith('.json')).sort()) {
   const aspect = W / H;
   const err = (c: Corners) => Math.min(...[0, 1, 2, 3].map((n) => outlineError(c, rotate(label.corners, n), aspect)));
   console.log(`${file.replace('.json', '')} (${label.kind} view, ${Date.now() - t0} ms): ${fits.length} candidate(s)`);
-  fits.forEach((f, i) => console.log(`  ${i + 1}. confidence ${f.confidence.toFixed(2)}, outline error ${err(f.corners).toFixed(3)} picture widths${err(f.corners) <= CLOSE ? '  <- close' : ''}`));
-  if (label.kind === 'behind') { total++; if (fits[0] && err(fits[0].corners) <= CLOSE) closeFirst++; }
+  fits.forEach((f, i) => console.log(`  ${i + 1}. confidence ${f.confidence.toFixed(2)}, outline error ${err(f.corners).toFixed(3)}${label.kind === 'behind' ? `, side lines off the true lines by up to ${sideError(f.corners, label.corners, aspect).toFixed(3)}` : ''} picture widths${err(f.corners) <= CLOSE && (label.kind !== 'behind' || sideError(f.corners, label.corners, aspect) <= 0.06) ? '  <- close' : ''}`));
+  if (label.kind === 'behind') { total++; if (fits[0] && err(fits[0].corners) <= CLOSE && sideError(fits[0].corners, label.corners, aspect) <= 0.06) closeFirst++; }
 }
-console.log(`\nbehind-the-end stills where the first candidate is within ${CLOSE}: ${closeFirst} of ${total}`);
+console.log(`\nbehind-the-end stills where the first candidate is within ${CLOSE} (and its side lines within 0.06): ${closeFirst} of ${total}`);

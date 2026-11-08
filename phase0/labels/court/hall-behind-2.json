@@ -1,0 +1,7 @@
+{
+ "still": "hall-behind-2.jpg",
+ "note": "Frame from a TestFlight recording of the quieter hall (RallyCam's cards drawn on it): behind a baseline, the court filmed is the one the player in black stands in. The first guess drew the right side line on the court to the right. Truth drawn by the user in red on the 960 x 540 frame; corners read by eye: far edge at y 320 from x 392 to 530, near edge level at y 462 from x -114 (off the picture) to 838.",
+ "kind": "behind",
+ "corners": {"farLeft": {"x": 0.408, "y": 0.593}, "farRight": {"x": 0.552, "y": 0.593}, "nearRight": {"x": 0.873, "y": 0.856}, "nearLeft": {"x": -0.119, "y": 0.856}},
+ "ignore": [[0, 0, 0.15, 0.36], [0.76, 0, 1, 0.44], [0, 0.8, 0.27, 1]]
+}

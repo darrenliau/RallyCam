@@ -306,7 +306,9 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
         corners: { farLeft: f(corners.farLeft), farRight: f(corners.farRight), nearRight: f(corners.nearRight), nearLeft: f(corners.nearLeft) },
         confidence: Math.max(0, Math.min(1, (final.hitShare - 0.3) / 0.4)),
       },
-      rank: current * (1 - CENTRE_BIAS * Math.min(1, away)),
+      // The match score adds up over every pixel of the court's lines, so a court that is too big (it takes in the lines of the court next
+      // to it) wins on size alone. Weighting by the share of the template that is on real lines puts the court whose own lines fit best first.
+      rank: current * final.hitShare * final.hitShare * (1 - CENTRE_BIAS * Math.min(1, away)),
     });
   }
   found.sort((a, b) => b.rank - a.rank);
