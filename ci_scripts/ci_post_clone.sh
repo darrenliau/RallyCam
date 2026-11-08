@@ -4,7 +4,10 @@
 # Every step is announced, and the ones that depend on the network are tried up to three times, so a failed run says where it stopped.
 set -eu
 
-step() { echo; echo "=== $1 ==="; }
+STEP_NAME="start"
+step() { STEP_NAME="$1"; echo; echo "=== $1 ==="; }
+# whatever stops the script, the last lines of the log say which step it was
+trap 'rc=$?; if [ "$rc" -ne 0 ]; then echo; echo "FAILED in step: $STEP_NAME (exit code $rc)"; fi' EXIT
 retry() { # retry <command...>: up to three tries
   n=1
   until "$@"; do
@@ -37,14 +40,20 @@ command -v node >/dev/null 2>&1 || retry brew install node
 command -v pod  >/dev/null 2>&1 || retry brew install cocoapods
 # The Apple Watch target (the @bacons/apple-targets plugin) needs CocoaPods 1.16.2 or newer to read the project it writes
 NEED_POD="1.16.2"
-HAVE_POD="$(pod --version)"
-if [ "$(printf '%s\n%s\n' "$NEED_POD" "$HAVE_POD" | sort -V | head -n1)" != "$NEED_POD" ]; then
-  echo "CocoaPods $HAVE_POD is older than $NEED_POD: upgrading"
-  retry brew upgrade cocoapods || retry brew install cocoapods
-  hash -r
-  HAVE_POD="$(pod --version)"
-  if [ "$(printf '%s\n%s\n' "$NEED_POD" "$HAVE_POD" | sort -V | head -n1)" != "$NEED_POD" ]; then
-    echo "error: CocoaPods is still $HAVE_POD after upgrading; the watch target needs $NEED_POD or newer."
+too_old() { [ "$(printf '%s\n%s\n' "$NEED_POD" "$1" | sort -V | head -n1)" != "$NEED_POD" ]; }
+POD=pod
+HAVE_POD="$($POD --version)"
+if too_old "$HAVE_POD"; then
+  echo "CocoaPods $HAVE_POD is older than $NEED_POD: installing a newer one with Homebrew"
+  # The runner's own CocoaPods is in the way of Homebrew's link step, which can make the install report an error even though the new
+  # one is installed. So the result is not trusted: the new one is run by its full path, and its version is checked.
+  retry brew install cocoapods || echo "warning: brew install cocoapods reported a problem; checking what was installed"
+  BREW_POD="$(brew --prefix cocoapods 2>/dev/null)/bin/pod"
+  if [ -x "$BREW_POD" ]; then POD="$BREW_POD"; fi
+  HAVE_POD="$($POD --version)"
+  echo "using $POD, CocoaPods $HAVE_POD"
+  if too_old "$HAVE_POD"; then
+    echo "error: CocoaPods is still $HAVE_POD; the watch target needs $NEED_POD or newer."
     exit 1
   fi
 fi
@@ -65,7 +74,7 @@ ls ios
 
 step "pod install"
 cd ios
-retry pod install
+retry "$POD" install
 cd ..
 
 step "Build number"
@@ -75,7 +84,8 @@ if [ -n "${CI_BUILD_NUMBER:-}" ]; then
   PBX="ios/RallyCam.xcodeproj/project.pbxproj"
   if [ -f "$PBX" ]; then
     sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $CI_BUILD_NUMBER;/g" "$PBX" 2>/dev/null \
-      || sed -i "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $CI_BUILD_NUMBER;/g" "$PBX"
+      || sed -i "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $CI_BUILD_NUMBER;/g" "$PBX" \
+      || echo "warning: could not set the build number in the project"
   fi
   grep -n "CURRENT_PROJECT_VERSION" "$PBX" || true
   (cd ios && xcrun agvtool new-version -all "$CI_BUILD_NUMBER") || echo "warning: agvtool could not set the build number; the project settings above are what count"
