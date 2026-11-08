@@ -58,10 +58,10 @@ export function ShuttleCards({ stats }: { stats: ShuttleStats | null }) {
       <View style={s.card}>
         <Text style={s.label}>Shuttle speed</Text>
         <Text style={s.big}>
-          {stats ? `~${stats.speedKmh}` : '–'}
+          {stats && stats.speedKmh > 0 ? `~${stats.speedKmh}` : '–'}
           <Text style={s.unit}> km/h</Text>
         </Text>
-        <Text style={s.caption}>{stats ? 'last shot · estimate' : 'needs shuttle tracking'}</Text>
+        <Text style={s.caption}>{stats ? (stats.speedKmh > 0 ? 'last shot · estimate' : 'waiting for a clear shot') : 'needs shuttle tracking'}</Text>
       </View>
       <View style={s.card}>
         <Text style={s.label}>Shots this rally</Text>

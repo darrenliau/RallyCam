@@ -162,3 +162,48 @@ describe('ShuttleEstimator', () => {
     });
   });
 });
+
+describe('ShuttleEstimator with the hitters known', () => {
+  // Two players on the centre line, 10.7 m apart; the nearest one in the picture hit it
+  const far = { u: 0.5, v: 0.1 }, near = { u: 0.5, v: 0.9 };
+  const hitterAt = (hit: { x: number }) => (hit.x < 0.5 ? near : far);
+
+  it('measures a shot from the two players\' places and the time between the hits', () => {
+    const est = new ShuttleEstimator(identity, hitterAt);
+    let t = fly(est, 0.2, 0.8, 0, 1.2, 0.5);        // served from the left (near player), 1.2 s across
+    t = fly(est, 0.8, 0.2, t + 1 / 60, 0.8, 0.5);   // turned at the right (far player's hit): the first shot ended there
+    const s = est.stats(t)!;
+    expect(s.shots).toBe(2);
+    // 10.7 m in about 1.2 s with drag: about 36 m/s
+    expect(s.speedKmh).toBeGreaterThan(110);
+    expect(s.speedKmh).toBeLessThan(150);
+  });
+
+  it('does not use the shuttle\'s own floor speed any more: no hitter, no speed', () => {
+    const est = new ShuttleEstimator(identity, () => undefined);
+    let t = fly(est, 0.2, 0.8, 0, 0.5);
+    t = fly(est, 0.8, 0.2, t + 1 / 60, 0.5);
+    expect(est.stats(t)!.speedKmh).toBe(0);
+  });
+
+  it('shows none rather than the shot before when a shot is not believable', () => {
+    const est = new ShuttleEstimator(identity, hitterAt);
+    const at = (t: number, x: number) => est.push({ t, x, y: 0.5 });
+    for (let i = 0; i <= 6; i++) at(i * 0.2, 0.2 + i * 0.1);   // served: 1.2 s across, seen seven times
+    at(1.4, 0.7); at(1.6, 0.6); at(1.8, 0.5);                 // returned: turns at the right (the first shot ends there)
+    expect(est.stats(1.8)!.speedKmh).toBeGreaterThan(0);
+    // turns again after only three more sightings: too little seen to call it a shot, so no number (not the shot before)
+    at(2.0, 0.6);
+    expect(est.stats(2.0)!.shots).toBe(3);
+    expect(est.stats(2.0)!.speedKmh).toBe(0);
+  });
+
+  it('starts again for a new rally', () => {
+    const est = new ShuttleEstimator(identity, hitterAt);
+    let t = fly(est, 0.2, 0.8, 0, 1.2);
+    t = fly(est, 0.8, 0.2, t + 1 / 60, 1.2);
+    est.newRally();
+    t = fly(est, 0.2, 0.8, t + 1, 0.3);
+    expect(est.stats(t)!.speedKmh).toBe(0);
+  });
+});

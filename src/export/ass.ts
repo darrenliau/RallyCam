@@ -218,9 +218,9 @@ function shuttleCards(c: Ctx, snap: OverlaySnapshot | undefined, a: number, b: n
   const sh = snap?.shuttle;
   shape(c, 10, a, b, roundRect(w * k, 74 * k, 12 * k), { x: x0 * k, y: y0 * k }, BACK, 0.84);
   label(c, 11, a, b, 'SHUTTLE SPEED', { x: (x0 + 12) * k, y: (y0 + 8) * k }, 10, SOFT, { bold: true, spacing: 1 });
-  label(c, 11, a, b, sh ? `~${sh.speedKmh}` : '–', { x: (x0 + 12) * k, y: (y0 + 22) * k }, 28, '#FFFFFF', { bold: true });
+  label(c, 11, a, b, sh && sh.speedKmh > 0 ? `~${sh.speedKmh}` : '–', { x: (x0 + 12) * k, y: (y0 + 22) * k }, 28, '#FFFFFF', { bold: true });
   label(c, 11, a, b, 'km/h', { x: (x0 + w - 12) * k, y: (y0 + 36) * k }, 12, LIME, { bold: true, anchor: 9 });
-  label(c, 11, a, b, sh ? 'LAST SHOT · ESTIMATE' : 'NEEDS SHUTTLE TRACKING', { x: (x0 + 12) * k, y: (y0 + 58) * k }, 10, MUTED);
+  label(c, 11, a, b, sh ? (sh.speedKmh > 0 ? 'LAST SHOT · ESTIMATE' : 'WAITING FOR A CLEAR SHOT') : 'NEEDS SHUTTLE TRACKING', { x: (x0 + 12) * k, y: (y0 + 58) * k }, 10, MUTED);
   const y1 = y0 + 80;
   shape(c, 10, a, b, roundRect(w * k, 94 * k, 12 * k), { x: x0 * k, y: y1 * k }, BACK, 0.84);
   label(c, 11, a, b, 'SHOTS THIS RALLY', { x: (x0 + 12) * k, y: (y1 + 8) * k }, 10, SOFT, { bold: true, spacing: 1 });

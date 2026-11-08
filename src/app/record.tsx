@@ -392,6 +392,10 @@ export default function Record() {
     () => new ShuttleEstimator((x, y) => {
       // Only a shuttle on the floor has a floor position. Above the court's horizon, or off its ends, `air` is set and the position is not used.
       return floorPosition(mapRef.current, frameToScreen({ x, y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }));
+    }, (hit) => {
+      // Who hit the shuttle: the player nearest to it in the picture. Their spot on the floor, and the time, give the speed of the shot.
+      const h = hitterSide(frameToScreen({ x: hit.x, y: hit.y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }), latest.current.tracks, mapRef.current);
+      return h ? { u: h.track.u, v: h.track.v } : undefined;
     }),
     [],
   );

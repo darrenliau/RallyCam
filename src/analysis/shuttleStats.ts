@@ -1,6 +1,7 @@
 import { COURT_L, COURT_W } from './court';
 import type { ShuttleOnMap, ShuttleStats } from './shuttle';
 import { landingCall, type FloorPoint, type RallyTrace } from './rallyEnd';
+import { shotSpeed, type Floor } from './shotSpeed';
 
 /** A confirmed shuttle position from the camera. x and y are fractions of the frame, t is in seconds. */
 export interface ShuttleSample { t: number; x: number; y: number }
@@ -24,6 +25,8 @@ const LANDED_S = 3;
 
 /** Two hits are never closer than this. */
 const MIN_HIT_GAP_S = 0.25;
+/** A shot's speed is only worked out when the shuttle was seen this many times between the two hits: with fewer, a hit was probably missed or invented. */
+const MIN_SAMPLES_PER_SHOT = 6;
 
 /**
  * Turns the shuttle path into the numbers on the cards: a rough speed and a count of shots.
@@ -50,12 +53,24 @@ export class ShuttleEstimator {
   private hitImage: { t: number; x: number; y: number } | null = null;
   private firstImage: { t: number; x: number; y: number } | null = null;
   private lastFloor: FloorPoint | null = null;
+  // Speed of a shot from where the two players stood at its two hits (see shotSpeed.ts); only when `hitterAt` is given
+  private prevShot: { t: number; floor: Floor } | null = null;
+  private samplesSinceHit = 0;
 
   /**
    * `toFloor` maps a frame position to court coordinates (0..1 across and along the court). It sets `air` when the point cannot be
    * on the floor (see floorPosition in court.ts): the position is then meaningless and is not used to decide anything.
    */
-  constructor(private toFloor: (x: number, y: number) => { u: number; v: number; air?: boolean }) {}
+  /**
+   * `hitterAt` says where on the floor the player who hit the shuttle was standing, given where the shuttle was in the frame at the hit
+   * (the nearest player in the picture). With it, a shot's speed comes from the two players' positions and the time between the hits,
+   * which works for a shuttle in the air; without it, the speed is taken from the shuttle's own floor positions, which only makes
+   * sense for one that is low over the floor.
+   */
+  constructor(
+    private toFloor: (x: number, y: number) => { u: number; v: number; air?: boolean },
+    private hitterAt?: (hit: { t: number; x: number; y: number }) => Floor | undefined,
+  ) {}
 
   newRally() {
     this.shots = 0;
@@ -71,6 +86,8 @@ export class ShuttleEstimator {
     this.hitImage = null;
     this.firstImage = null;
     this.lastFloor = null;
+    this.prevShot = null;
+    this.samplesSinceHit = 0;
   }
 
   push(s: ShuttleSample) {
@@ -78,6 +95,7 @@ export class ShuttleEstimator {
     // a point that is on the floor and well outside the court is the next court's, a point that may be in the air is not judged by where it falls
     if (!air && (u < -OUTSIDE_U || u > 1 + OUTSIDE_U || v < -OUTSIDE_V || v > 1 + OUTSIDE_V)) return;
     this.recent.push(s);
+    this.samplesSinceHit += 1;
     while (this.recent.length && s.t - this.recent[0].t > 1) this.recent.shift();
     const last = this.last;
     const gap = last ? s.t - last.t : Infinity;
@@ -120,8 +138,7 @@ export class ShuttleEstimator {
       const dot = vel.x * prev.x + vel.y * prev.y;
       const norm = Math.hypot(vel.x, vel.y) * Math.hypot(prev.x, prev.y);
       if (norm > 0 && dot / norm < -0.2 && s.t - this.lastHitT >= MIN_HIT_GAP_S) {
-        this.lastShotKmh = this.peakKmh;
-        this.peakKmh = 0;
+        if (!this.hitterAt) { this.lastShotKmh = this.peakKmh; this.peakKmh = 0; }
         this.count(s.t, last.u, last.v, last.air, last);
       }
     }
@@ -136,6 +153,19 @@ export class ShuttleEstimator {
     this.lastHitT = t;
     this.hit = { t, u, v, ...(air ? { air } : {}) };
     this.hitImage = { t, x: at.x, y: at.y };
+    if (this.hitterAt) this.measureShot(t, at);
+  }
+
+  /** The shot that ended with this hit: from the previous hitter's spot to this one, in the time between. */
+  private measureShot(t: number, at: { x: number; y: number }) {
+    const floor = this.hitterAt!({ t, x: at.x, y: at.y });
+    const prev = this.prevShot;
+    if (prev) {
+      const r = floor && this.samplesSinceHit >= MIN_SAMPLES_PER_SHOT ? shotSpeed(prev.floor, floor, t - prev.t) : null;
+      this.lastShotKmh = r ? r.kmh : 0; // no believable number: show none rather than the shot before
+    }
+    this.prevShot = floor ? { t, floor } : null;
+    this.samplesSinceHit = 0;
   }
 
   /** What happened so far in this rally, for deciding who won it (see rallyEnd.ts). */
@@ -151,7 +181,8 @@ export class ShuttleEstimator {
   /** What to show now, or null if the shuttle has not been seen for a while. */
   stats(now: number): ShuttleStats | null {
     if (!this.last || now - this.last.t > GONE_AFTER_S) return null;
-    const kmh = this.lastShotKmh > 0 ? this.lastShotKmh : this.peakKmh;
+    // with hitters known, only a measured shot counts; the shuttle's own floor speed is not used (in the air it means nothing)
+    const kmh = this.hitterAt ? this.lastShotKmh : this.lastShotKmh > 0 ? this.lastShotKmh : this.peakKmh;
     return { speedKmh: Math.round(kmh), shots: this.shots };
   }
 
