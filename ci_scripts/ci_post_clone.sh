@@ -69,9 +69,16 @@ retry pod install
 cd ..
 
 step "Build number"
-# Xcode Cloud numbers its own builds; setting it here as well is a convenience, so a problem with it must not stop the run
+# The phone app and the watch app inside it must have the same build number, or the App Store export rejects the build. Xcode Cloud
+# numbers its own builds; this sets the number in every target of the project (the phone app and the watch app) so they agree.
 if [ -n "${CI_BUILD_NUMBER:-}" ]; then
-  (cd ios && xcrun agvtool new-version -all "$CI_BUILD_NUMBER") || echo "warning: could not set the build number (agvtool); Xcode Cloud sets it itself"
+  PBX="ios/RallyCam.xcodeproj/project.pbxproj"
+  if [ -f "$PBX" ]; then
+    sed -i '' "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $CI_BUILD_NUMBER;/g" "$PBX" 2>/dev/null \
+      || sed -i "s/CURRENT_PROJECT_VERSION = [0-9][0-9]*;/CURRENT_PROJECT_VERSION = $CI_BUILD_NUMBER;/g" "$PBX"
+  fi
+  grep -n "CURRENT_PROJECT_VERSION" "$PBX" || true
+  (cd ios && xcrun agvtool new-version -all "$CI_BUILD_NUMBER") || echo "warning: agvtool could not set the build number; the project settings above are what count"
 fi
 
 step "Done"

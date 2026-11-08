@@ -23,4 +23,13 @@ describe('Xcode Cloud setup scripts', () => {
     const plugins = JSON.parse(readFileSync('app.json', 'utf8')).expo.plugins as unknown[];
     expect(plugins).toContain('@bacons/apple-targets');
   });
+  it('the watch app says it is a watch app (WKApplication) and names its companion, which the App Store export checks', () => {
+    const plist = readFileSync('targets/watch/Info.plist', 'utf8');
+    expect(plist).toMatch(/<key>WKApplication<\/key>\s*<true\/>/);
+    expect(plist).toContain('<key>WKCompanionAppBundleIdentifier</key>');
+    expect(plist).toContain('com.darrenliau.rallycam');
+  });
+  it('the setup script gives the phone app and the watch app the same build number', () => {
+    expect(readFileSync('ci_scripts/ci_post_clone.sh', 'utf8')).toContain('CURRENT_PROJECT_VERSION = $CI_BUILD_NUMBER;');
+  });
 });
