@@ -63,6 +63,7 @@
     "plugins": [
       "expo-router",
       "./plugins/withPodsDeploymentTarget",
+      "@bacons/apple-targets",
       [
         "expo-camera",
         {

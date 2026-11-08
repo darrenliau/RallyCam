@@ -3,6 +3,7 @@
   "version": "1.0.0",
   "main": "expo-router/entry",
   "dependencies": {
+    "@bacons/apple-targets": "5.0.0",
     "@expo/vector-icons": "^15.1.1",
     "expo": "~58.0.21",
     "expo-camera": "~58.0.14",

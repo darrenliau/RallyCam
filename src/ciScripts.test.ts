@@ -17,4 +17,10 @@ describe('Xcode Cloud setup scripts', () => {
   it('the shuttle model is in the repository', () => {
     expect(existsSync('modules/rallycam-export/ios/Models/TrackNetV3.mlpackage/Manifest.json')).toBe(true);
   });
+  it('the Apple Watch app is in the repository and the plugin that adds it to the project is set up', () => {
+    expect(existsSync('targets/watch/expo-target.config.js')).toBe(true);
+    expect(existsSync('targets/watch/RallyCamWatchApp.swift')).toBe(true);
+    const plugins = JSON.parse(readFileSync('app.json', 'utf8')).expo.plugins as unknown[];
+    expect(plugins).toContain('@bacons/apple-targets');
+  });
 });

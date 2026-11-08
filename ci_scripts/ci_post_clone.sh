@@ -35,7 +35,20 @@ export HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 HOMEBREW_NO_ENV_H
 # The runner has Homebrew but not necessarily node or CocoaPods
 command -v node >/dev/null 2>&1 || retry brew install node
 command -v pod  >/dev/null 2>&1 || retry brew install cocoapods
-echo "node $(node -v), npm $(npm -v), pod $(pod --version)"
+# The Apple Watch target (the @bacons/apple-targets plugin) needs CocoaPods 1.16.2 or newer to read the project it writes
+NEED_POD="1.16.2"
+HAVE_POD="$(pod --version)"
+if [ "$(printf '%s\n%s\n' "$NEED_POD" "$HAVE_POD" | sort -V | head -n1)" != "$NEED_POD" ]; then
+  echo "CocoaPods $HAVE_POD is older than $NEED_POD: upgrading"
+  retry brew upgrade cocoapods || retry brew install cocoapods
+  hash -r
+  HAVE_POD="$(pod --version)"
+  if [ "$(printf '%s\n%s\n' "$NEED_POD" "$HAVE_POD" | sort -V | head -n1)" != "$NEED_POD" ]; then
+    echo "error: CocoaPods is still $HAVE_POD after upgrading; the watch target needs $NEED_POD or newer."
+    exit 1
+  fi
+fi
+echo "node $(node -v), npm $(npm -v), pod $HAVE_POD"
 
 step "npm ci"
 retry npm ci

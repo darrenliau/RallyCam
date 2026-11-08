@@ -39,6 +39,10 @@ yarn-error.*
 # generated native folders
 /ios/*
 !/ios/ci_scripts/
+
+# made by the @bacons/apple-targets plugin on every prebuild (the watch app's Swift files and expo-target.config.js are what is kept)
+/targets/*/Assets.xcassets/
+/targets/*/Info.plist
 /android
 
 __pycache__/
