@@ -212,6 +212,7 @@ export default function Record() {
     }
   }, [lensInfo, settings.ready, settings.lens]);
 
+  const offScreenCorner = [corners.farLeft, corners.farRight, corners.nearRight, corners.nearLeft].some((p) => p.x < 0 || p.y < 0 || p.x > width || p.y > height);
   const lockCourt = () => {
     savedCorners[sizeKey] = corners;
     if (venue) {
@@ -951,6 +952,7 @@ export default function Record() {
         <View style={[s.banner, { bottom: B, left: (width - 440) / 2, width: 440 }]}>
           <Text style={s.bannerText}>
             {courtFinder === 'finding' ? 'Looking for the court lines… ' : courtFinder === 'found' ? (courtSure ? 'We drew the court from the camera. Drag any dot that is off onto its corner, then lock it. ' : 'This is only a guess at the court. Check every dot and drag it onto its corner, or tap Try another. ') : courtFinder === 'failed' ? 'We could not find the court lines. Drag the four dots onto the corners of the court. ' : lensChanged ? 'The lens changed, so the court looks different. Drag the four dots onto the corners again. ' : staleCourt ? 'This phone\'s screen is a different shape from when the court was saved. Check the four dots. ' : 'Drag the four dots onto the outer corners of the court. Recording starts when you lock it. '}
+            {offScreenCorner ? 'A corner is off the screen, so its dashed dot sits on the edge. Drag it and the corner moves three times as far. ' : ''}
             {venue ? `It is saved for ${venue.name}.` : ''}
           </Text>
           <Button label={recording ? 'Lock court' : 'Lock court and start recording'} onPress={lockCourt} />
