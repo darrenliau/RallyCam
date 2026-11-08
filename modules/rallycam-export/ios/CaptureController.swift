@@ -301,6 +301,7 @@ final class CaptureController: NSObject {
       default: level = "unknown"
       }
       NSLog("RallyCam: system pressure \(level)")
+      WatchBridge.shared.setPressure(level)
       self?.onPressure?(level)
     }
   }
@@ -1174,6 +1175,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
     detectIfDue(pixelBuffer)
     shuttleIfDue(pixelBuffer, time: pts)
     shuttleModelIfDue(pixelBuffer, time: pts)
+    WatchBridge.shared.offer(pixelBuffer, time: CMTimeGetSeconds(pts))   // a small picture for the watch, when one is due
     if !stillWaiters.isEmpty { serveStills(pixelBuffer) }
 
     if state == .armed {

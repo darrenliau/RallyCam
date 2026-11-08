@@ -1,17 +1,129 @@
 import SwiftUI
 
+/// Two pages, one above the other (turn the Digital Crown or swipe up): the picture with the score, and the score buttons.
 struct ContentView: View {
+  @ObservedObject var link: PhoneLink
+
   var body: some View {
-    VStack(spacing: 6) {
-      Image(systemName: "video.fill")
-        .font(.title2)
-        .foregroundStyle(.green)
-      Text("RallyCam")
-        .font(.headline)
-      Text("Watch link is coming")
-        .font(.footnote)
-        .foregroundStyle(.secondary)
+    TabView {
+      PreviewPage(link: link)
+      ControlsPage(link: link)
     }
-    .padding()
+    .tabViewStyle(.verticalPage)
+  }
+}
+
+/// What the camera sees, with a recording dot and clock over it, and the score under it.
+struct PreviewPage: View {
+  @ObservedObject var link: PhoneLink
+
+  var body: some View {
+    let s = link.state ?? RallyState()
+    VStack(spacing: 4) {
+      ZStack(alignment: .topLeading) {
+        picture
+        if s.isRecording {
+          HStack(spacing: 3) {
+            Circle().fill(Color.red).frame(width: 6, height: 6)
+            Text(s.clock).font(.caption2.monospacedDigit())
+          }
+          .padding(.horizontal, 5)
+          .padding(.vertical, 2)
+          .background(Color.black.opacity(0.55), in: Capsule())
+          .padding(3)
+        }
+      }
+      if s.isTraining {
+        Text("Training").font(.headline)
+      } else {
+        HStack {
+          Text("\(s.a ?? 0)").font(.title2.bold())
+          Spacer()
+          Text(servingText(s)).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+          Spacer()
+          Text("\(s.b ?? 0)").font(.title2.bold())
+        }
+      }
+      Text(statusText(s)).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+    }
+    .padding(.horizontal, 2)
+  }
+
+  /// The latest picture, or why there is none. It is checked again every second, so a picture that stops coming says so.
+  private var picture: some View {
+    TimelineView(.periodic(from: .now, by: 1)) { context in
+      let fresh = link.imageAt.map { context.date.timeIntervalSince($0) < 3 } ?? false
+      ZStack {
+        if let image = link.image {
+          Image(uiImage: image)
+            .resizable()
+            .aspectRatio(16.0 / 9.0, contentMode: .fit)
+            .opacity(fresh ? 1 : 0.35)
+        } else {
+          Rectangle().fill(Color.gray.opacity(0.25)).aspectRatio(16.0 / 9.0, contentMode: .fit)
+        }
+        if !fresh {
+          Text(link.reachable ? "Waiting for the picture" : "Open RallyCam on the phone")
+            .font(.caption2)
+            .multilineTextAlignment(.center)
+            .padding(4)
+        }
+      }
+      .clipShape(RoundedRectangle(cornerRadius: 8))
+    }
+  }
+
+  private func servingText(_ s: RallyState) -> String {
+    guard let serving = s.serving else { return "" }
+    let who = s.server ?? ""
+    let court = s.court ?? ""
+    return "\(serving == "A" ? "◀" : "▶") \(who)\n\(court)"
+  }
+
+  private func statusText(_ s: RallyState) -> String {
+    if let over = s.over { return over == "A" ? "Game over: \(s.nameA ?? "near side") won" : "Game over: \(s.nameB ?? "far side") won" }
+    if link.state == nil { return "" }
+    if s.locked == false { return "Lock the court on the phone" }
+    if let free = s.freeMb, free < 2000 { return "Low storage: \(free / 1000) GB free" }
+    return ""
+  }
+}
+
+/// Add a point for either side, undo, swap the last automatic point, end the game (with a question first).
+struct ControlsPage: View {
+  @ObservedObject var link: PhoneLink
+  @State private var confirmEnd = false
+
+  var body: some View {
+    let s = link.state ?? RallyState()
+    let playing = s.isRecording && !s.isOver && !s.isTraining
+    ScrollView {
+      VStack(spacing: 6) {
+        if !s.isTraining {
+          Button { link.send("point", side: "A") } label: { Text("+ \(s.nameA ?? "Near side")").frame(maxWidth: .infinity) }
+            .tint(.green)
+            .disabled(!playing)
+          Button { link.send("point", side: "B") } label: { Text("+ \(s.nameB ?? "Far side")").frame(maxWidth: .infinity) }
+            .tint(.blue)
+            .disabled(!playing)
+          HStack(spacing: 6) {
+            Button("Undo") { link.send("undo") }
+              .disabled((s.points ?? 0) == 0)
+            Button("Swap") { link.send("swap") }
+              .disabled(s.last != "auto")
+          }
+        }
+        Button(role: .destructive) { confirmEnd = true } label: { Text(s.isTraining ? "End session" : "End game").frame(maxWidth: .infinity) }
+          .disabled(!s.isRecording && (s.points ?? 0) == 0)
+        if let note = link.note {
+          Text(note).font(.caption2).foregroundStyle(.orange)
+        }
+      }
+      .buttonStyle(.bordered)
+    }
+    .confirmationDialog("End it?", isPresented: $confirmEnd, titleVisibility: .visible) {
+      Button(s.isTraining ? "End session" : "End game", role: .destructive) { link.send("end") }
+      Button("Keep recording", role: .cancel) {}
+    }
   }
 }

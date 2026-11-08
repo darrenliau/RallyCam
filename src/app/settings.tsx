@@ -4,10 +4,23 @@ import { useCallback, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet, Switch, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { usesNativeCapture } from '../camera/RecorderView';
+import { Capture } from '../../modules/rallycam-export/src/capture';
 import { Card, Label } from '../components/ui';
 import { ANALYSIS_MB_PER_MINUTE, formatBytes, freeSpaceBytes, videosFolderStats } from '../export/storage';
 import { QUALITY, mbPerMinute, updateSettings, useSettings, type VideoQuality } from '../settings';
 import { colors, radius } from '../theme';
+
+type WatchStatus = { supported: boolean; paired?: boolean; installed?: boolean; reachable?: boolean };
+
+/** What to tell the user about the link to their Apple Watch. */
+function watchLine(w: WatchStatus | null): string {
+  if (!w) return 'Looking for a watch…';
+  if (!w.supported) return 'This phone cannot link to a watch.';
+  if (!w.paired) return 'No Apple Watch is paired with this phone.';
+  if (!w.installed) return 'The RallyCam watch app is not installed yet. Open the Watch app on the phone and install RallyCam.';
+  if (w.reachable) return 'Connected: the watch app is open.';
+  return 'Ready. Open RallyCam on the watch to see the camera.';
+}
 
 export default function Settings() {
   const insets = useSafeAreaInsets();
@@ -16,6 +29,16 @@ export default function Settings() {
   useFocusEffect(useCallback(() => {
     const v = videosFolderStats();
     setStorage({ free: freeSpaceBytes(), used: v.bytes, count: v.count });
+  }, []));
+  // Is the watch paired, does it have the app, can it be reached: looked at again every couple of seconds while this screen is open
+  const [watch, setWatch] = useState<WatchStatus | null>(null);
+  useFocusEffect(useCallback(() => {
+    const native = Capture;
+    if (!native) return;
+    const read = () => setWatch(native.getWatchStatus());
+    read();
+    const id = setInterval(read, 2000);
+    return () => clearInterval(id);
   }, []));
 
   return (
@@ -47,6 +70,19 @@ export default function Settings() {
         <Text style={s.value}>{Number.isFinite(storage.free) ? formatBytes(storage.free) : '–'} <Text style={s.muted}>free on this phone</Text></Text>
         <Text style={s.muted}>To free space, open a game and tap "Delete video". The score and stats are kept.</Text>
       </Card>
+
+      {usesNativeCapture && (
+        <Card style={{ gap: 6 }}>
+          <View style={s.row}>
+            <View style={{ flex: 1 }}>
+              <Label>Apple Watch</Label>
+              <Text style={s.muted}>Shows a small live picture of the camera on your watch while you record, and has buttons to add, undo or swap a point. Open RallyCam on the watch to use it.</Text>
+            </View>
+            <Switch value={settings.watchPreview} onValueChange={(v) => updateSettings({ watchPreview: v })} accessibilityLabel="Watch preview" />
+          </View>
+          <Text style={s.muted}>{watchLine(watch)}</Text>
+        </Card>
+      )}
 
       {usesNativeCapture && (
         <Card style={{ gap: 6 }}>

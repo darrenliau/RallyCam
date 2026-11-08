@@ -44,6 +44,8 @@ type Events = {
   onPressure: (e: { level: string }) => void;
   onShuttle: (e: ShuttleEvent) => void;
   onShuttleModel: (e: ShuttleModelEvent) => void;
+  /** A button pressed on the Apple Watch app. */
+  onWatchCommand: (e: { command?: string; side?: string }) => void;
 };
 
 declare class RallyCamCaptureModule extends NativeModule<Events> {
@@ -68,6 +70,12 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   setShuttleModelCrop(x: number, y: number, w: number, h: number): void;
   /** While true the model looks at the whole frame even when a crop is set (its crop picture is kept ready). */
   setShuttleModelFull(full: boolean): void;
+  /** Sends the watch app a small picture of the camera a few times a second while on. */
+  setWatchPreview(on: boolean): void;
+  /** The state of the game for the watch app, as JSON text (see src/watchBridge.ts). */
+  sendWatchState(json: string): void;
+  /** Is a watch paired, has it the app, and can it be reached right now. */
+  getWatchStatus(): { supported: boolean; paired?: boolean; installed?: boolean; reachable?: boolean };
   startShuttleLog(uri: string): void;
   stopShuttleLog(): void;
   getShuttleStatus(): { shuttleFrames: number; shuttleWithCandidates: number; shuttleConfirmed: number; shuttleShaky: number; shuttleLastCandidates: number };

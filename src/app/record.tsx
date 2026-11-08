@@ -25,6 +25,7 @@ import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo, se
 import { EXPERIMENTS, HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
+import { buildWatchState, parseWatchCommand, watchCommandAllowed } from '../watchBridge';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, nextLensName, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
@@ -806,6 +807,59 @@ export default function Record() {
     // Otherwise, on an iPhone dev build, Review makes the video with the overlay drawn in right away
     await leaveTo(() => router.replace({ pathname: '/match/[id]', params: { id, ...(kept && !baked && !footage && canExportOnDevice ? { export: '1' } : {}) } }));
   };
+
+  // The last point was given by the camera: turn it round (what "Wrong, swap" does, but without needing its short-lived banner)
+  const swapLastPoint = () => {
+    const i = state.rallies.length - 1;
+    const last = state.rallies[i];
+    if (!last || last.source !== 'auto') return;
+    tally.current.agreed -= 1;
+    tally.current.flipped += 1;
+    setAutoPoint(null);
+    persist(editRally(state, i, { winner: last.winner === 'A' ? 'B' : 'A', source: 'manual' }));
+  };
+
+  // --- The Apple Watch: it shows what the camera sees and the score, and its buttons come back here ---
+  // The latest versions of the actions, for the listener below, which is set up once
+  const watchActions = useRef({ point: (_side: Side) => {}, undo: () => {}, swap: () => {}, end: () => {} });
+  watchActions.current = { point: onPoint, undo: onUndo, swap: swapLastPoint, end: () => { endMatch(); } };
+  useEffect(() => {
+    if (!Capture || !usesNativeCapture) return;
+    const sub = Capture.addListener('onWatchCommand', (e) => {
+      const cmd = parseWatchCommand(e);
+      if (!cmd) return;
+      const st = liveState.current;
+      const last = st.rallies[st.rallies.length - 1];
+      const allowed = watchCommandAllowed(cmd, {
+        recording: recordingStarted.current,
+        over: !!st.matchWinner,
+        training: !!st.config.training,
+        ending: endingRef.current,
+        rallies: st.rallies.length,
+        lastSource: last?.source,
+      });
+      if (!allowed) return;
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      if (cmd.kind === 'point') watchActions.current.point(cmd.side);
+      else if (cmd.kind === 'undo') watchActions.current.undo();
+      else if (cmd.kind === 'swap') watchActions.current.swap();
+      else watchActions.current.end();
+    });
+    return () => sub.remove();
+  }, []);
+  // Tell the watch how the game stands: when anything it shows changes, and as the clock ticks
+  useEffect(() => {
+    if (!Capture || !usesNativeCapture || !settings.watchPreview) return;
+    Capture.sendWatchState(buildWatchState({ state, recording, elapsedMs: elapsed, fps, freeBytes: freeSpaceBytes(), locked: !aligning, training }));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [state, recording, Math.floor(elapsed / 1000), fps, aligning, training, settings.watchPreview]);
+  // The picture for the watch, while this screen is open (so the framing can be checked before the court is locked too)
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !usesNativeCapture) return;
+    native.setWatchPreview(settings.watchPreview);
+    return () => native.setWatchPreview(false);
+  }, [settings.watchPreview]);
 
   // A game is over at 21 (win by 2, capped at 30). Stop recording a moment later so the final score is seen.
   // Fix last point cancels this, because the game is no longer won.

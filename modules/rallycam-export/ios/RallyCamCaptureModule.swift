@@ -38,7 +38,7 @@ public class RallyCamCaptureModule: Module {
   public func definition() -> ModuleDefinition {
     Name("RallyCamCapture")
 
-    Events("onDetections", "onError", "onInterruption", "onPressure", "onShuttle", "onShuttleModel")
+    Events("onDetections", "onError", "onInterruption", "onPressure", "onShuttle", "onShuttleModel", "onWatchCommand")
 
     OnCreate {
       let controller = CaptureController.shared
@@ -60,6 +60,14 @@ public class RallyCamCaptureModule: Module {
       controller.onPressure = { [weak self] level in
         DispatchQueue.main.async { self?.sendEvent("onPressure", ["level": level]) }
       }
+      // The watch app: its button presses come in as events, and it is sent a picture and the state of the game (see WatchBridge.swift)
+      WatchBridge.shared.onCommand = { [weak self] message in
+        var payload: [String: Any] = [:]
+        if let command = message["command"] as? String { payload["command"] = command }
+        if let side = message["side"] as? String { payload["side"] = side }
+        DispatchQueue.main.async { self?.sendEvent("onWatchCommand", payload) }
+      }
+      WatchBridge.shared.start()
     }
 
     // Starts the camera. Resolves with the frame rate and size it really settled on.
@@ -154,6 +162,19 @@ public class RallyCamCaptureModule: Module {
     }
 
     // { state: off | loading | ready | missing | failed, problem, framesSeen, framesDropped, windows, windowsDropped, detections, predictMs }
+    // The watch app: whether to send it pictures, the state of the game as JSON text, and whether a watch is paired and reachable.
+    Function("setWatchPreview") { (on: Bool) in
+      WatchBridge.shared.setPreview(on)
+    }
+
+    Function("sendWatchState") { (json: String) in
+      WatchBridge.shared.sendState(json)
+    }
+
+    Function("getWatchStatus") { () -> [String: Any] in
+      WatchBridge.shared.status()
+    }
+
     Function("getShuttleModelStatus") { () -> [String: Any] in
       CaptureController.shared.shuttleModelStatus()
     }
