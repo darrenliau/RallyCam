@@ -54,6 +54,28 @@ describe('DistanceMeter', () => {
     m.update([{ id: 0, u: 0.5, v: 0.9 }], owner);
     expect(m.metres(0)).toBe(0);
   });
+  it('counts nothing for a player standing still with a jittery position', () => {
+    const m = new DistanceMeter();
+    const owner = (id: number) => id;
+    let seed = 3;
+    const rand = () => { seed = (seed * 1664525 + 1013904223) % 4294967296; return seed / 4294967296 - 0.5; };
+    for (let i = 0; i < 2000; i++) m.update([{ id: 0, u: 0.5 + rand() * 0.04, v: 0.5 + rand() * 0.015 }], owner); // wobble of about 12 cm
+    expect(m.metres(0)).toBe(0);
+  });
+  it('counts a steady walk to within one step', () => {
+    const m = new DistanceMeter();
+    const owner = (id: number) => id;
+    for (let i = 0; i <= 50; i++) m.update([{ id: 0, u: 0.5, v: 0.2 + i * (0.0075) }], owner); // 0.1 m a look, 5 m in all
+    expect(m.metres(0)).toBeGreaterThan(4.4);
+    expect(m.metres(0)).toBeLessThanOrEqual(5.1);
+  });
+  it('does not count while a player is not seen', () => {
+    const m = new DistanceMeter();
+    const owner = (id: number) => id;
+    m.update([{ id: 0, u: 0.5, v: 0.5 }], owner);
+    m.update([{ id: 0, u: 0.5, v: 0.6, lost: 3 }], owner);
+    expect(m.metres(0)).toBe(0);
+  });
   it('follows a swapped tag', () => {
     const m = new DistanceMeter();
     let swapped = false;

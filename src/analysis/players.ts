@@ -20,19 +20,31 @@ export interface PlayerTracker {
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
-/** Adds up how far each player has moved, in metres on the court floor. */
+/** A player only counts as having moved once they are this far (metres) from where they were last counted: smaller steps are detector jitter. */
+const STEP_M = 0.5;
+/** A jump bigger than this between two looks is a tracker mix-up (ids swapped, a new person), not running. */
+const JUMP_M = 3;
+
+/**
+ * Adds up how far each player has moved, in metres on the court floor.
+ * Positions wobble by several centimetres from one look to the next even when a player stands still, so adding up every step
+ * would make a player standing still cover tens of metres a minute. Instead each track keeps an anchor, the place it was last
+ * counted at, and only when the player is STEP_M or more from it is that distance added and the anchor moved there.
+ */
 export class DistanceMeter {
-  private last = new Map<number, { u: number; v: number }>();
+  private anchor = new Map<number, { u: number; v: number }>();
   private total = new Map<number, number>();
 
   /** `owner` maps a track id to the player it is currently tagged as. */
   update(tracks: Track[], owner: (trackId: number) => number): void {
     for (const t of tracks) {
-      const prev = this.last.get(t.id);
-      this.last.set(t.id, { u: t.u, v: t.v });
-      if (!prev) continue;
-      const d = Math.hypot((t.u - prev.u) * COURT_W, (t.v - prev.v) * COURT_L);
-      if (d < 0.03 || d > 3) continue; // ignore detector jitter and id jumps
+      if ((t.lost ?? 0) > 0) continue; // the position is a guess while the player is not seen
+      const a = this.anchor.get(t.id);
+      if (!a) { this.anchor.set(t.id, { u: t.u, v: t.v }); continue; }
+      const d = Math.hypot((t.u - a.u) * COURT_W, (t.v - a.v) * COURT_L);
+      if (d > JUMP_M) { this.anchor.set(t.id, { u: t.u, v: t.v }); continue; } // a mix-up: start counting from here
+      if (d < STEP_M) continue;
+      this.anchor.set(t.id, { u: t.u, v: t.v });
       const p = owner(t.id);
       this.total.set(p, (this.total.get(p) ?? 0) + d);
     }
