@@ -21,6 +21,8 @@ export interface RallyTrace {
   hitImage?: { t: number; x: number; y: number } | null;
   /** The shuttle was moving down the picture when it was last seen, so it probably came down rather than being hidden. */
   descending?: boolean;
+  /** Times the shuttle changed direction with no player near it (the ceiling, a wall, the net tape, or a tracking glitch): not counted as hits. */
+  strays?: number;
 }
 
 /** Who should be serving, and from where, according to the score. */
@@ -95,6 +97,7 @@ export function judgeRally(trace: RallyTrace, now: number, singles: boolean, cal
   if (trace.shots < 3) confidence -= 0.1;
   if (indirect) confidence -= 0.2;
   if (!hitterSide) confidence -= 0.1;
+  if (trace.strays) confidence -= 0.2; // the shuttle changed direction away from the players: it may have touched something
   // Players stopping after the shuttle came down is what a finished rally looks like
   if (calm === true) confidence += 0.1;
   if (calm === false) confidence -= 0.2;
@@ -107,13 +110,71 @@ const SERVER_REACH_M = 3.5;
 /** Slack on the left/right halves, as a fraction of the court width. */
 const HALF_SLACK = 0.12;
 
-/** Whether a floor position is inside the court, and how far outside (positive) or inside (negative) the nearest line it is, in metres. */
+/**
+ * Whether a floor position is inside the court, and how far outside (positive) or inside (negative) the nearest line it is, in metres.
+ * The lines are part of the court (a shuttle that lands on a line is in), and the corners the user marks are the outer edges of the
+ * lines, so a position exactly on the boundary is in.
+ */
 export function landingCall(p: { u: number; v: number }, singles: boolean): { inBounds: boolean; outside: number } {
   const side = singles ? SINGLES_SIDE_M : 0;
   const xm = p.u * COURT_W;
   const ym = p.v * COURT_L;
   const outside = Math.max(side - xm, xm - (COURT_W - side), -ym, ym - COURT_L);
-  return { inBounds: outside < 0, outside };
+  return { inBounds: outside <= 0, outside };
+}
+
+/** From the net to the short service line (metres), and the doubles long service line's distance inside the back line. */
+const SHORT_SERVICE_M = 1.98;
+const DOUBLES_LONG_SERVICE_M = 0.76;
+
+/**
+ * Whether a serve that came down at this floor position is good, and how far outside the service court it is (metres, negative inside).
+ * The service court is the one diagonally across the net from the server: from the short service line (1.98 m from the net) to the
+ * back line in singles, or to the doubles long service line (0.76 m in from the back line) in doubles, and from the centre line to the
+ * side line (the inner singles side line in singles, the outer one in doubles). A server in the right court serves into the receiver's
+ * right court, which is on the opposite half of the picture.
+ */
+export function serveCall(p: { u: number; v: number }, server: { side: Side; court: Court }, singles: boolean): { inCourt: boolean; outside: number } {
+  const half = COURT_W / 2;
+  const serverRightOfPicture = server.side === 'A' ? server.court === 'right' : server.court === 'left'; // near server's right is the picture's right, far server's is its left
+  const xm = p.u * COURT_W;
+  const side = singles ? SINGLES_SIDE_M : 0;
+  // the receiver's court is on the other half of the picture to the server
+  const [lo, hi] = serverRightOfPicture ? [side, half] : [half, COURT_W - side];
+  const outsideAcross = Math.max(lo - xm, xm - hi);
+  // distance from the net on the receiver's half (negative when it came down on the server's own half)
+  const fromNet = (server.side === 'A' ? 0.5 - p.v : p.v - 0.5) * COURT_L;
+  const back = COURT_L / 2 - (singles ? 0 : DOUBLES_LONG_SERVICE_M);
+  const outsideAlong = Math.max(SHORT_SERVICE_M - fromNet, fromNet - back);
+  const outside = Math.max(outsideAcross, outsideAlong);
+  return { inCourt: outside <= 0, outside };
+}
+
+/**
+ * Decides a rally in which only the serve was seen: the receiver did not hit it back. If it came down in the right service court
+ * the server wins (an ace, or a return that was missed); otherwise it is a service fault (into the net, short, long, wide, or into the
+ * wrong court) and the receiver wins. Returns null until the rally is over, or when it came down nowhere we saw.
+ * Less sure than a longer rally, because the camera may simply have missed the return.
+ */
+export function judgeServe(trace: RallyTrace, now: number, singles: boolean, serve: { side: Side; court: Court }, calm?: boolean): Verdict | null {
+  const { lastSeen } = trace;
+  if (!lastSeen || trace.shots !== 1) return null;
+  if (!isRallyOver(trace, now, singles, calm)) return null;
+  // where it came down: the last sighting if that was on the floor, else the last floor sighting just before it
+  let landing: FloorPoint | undefined = lastSeen.air ? undefined : lastSeen;
+  const indirect = !landing;
+  if (!landing && trace.lastFloor && lastSeen.t - trace.lastFloor.t <= INDIRECT_S) landing = trace.lastFloor;
+  if (!landing) return null;
+  const { inCourt, outside } = serveCall(landing, serve, singles);
+  const nearLine = Math.abs(outside) < UNSURE_M;
+  let confidence = 0.65;
+  if (nearLine) confidence -= 0.3;
+  if (indirect) confidence -= 0.15;
+  if (trace.strays) confidence -= 0.2;
+  if (calm === true) confidence += 0.1;
+  if (calm === false) confidence -= 0.2;
+  const receiver: Side = serve.side === 'A' ? 'B' : 'A';
+  return { winner: inCourt ? serve.side : receiver, confidence: Math.max(0.1, +confidence.toFixed(2)), reason: inCourt ? 'serve landed in, not returned' : 'service fault' };
 }
 
 /** A landing position that is not close to a line or to the net, so the in or out call can be trusted. */

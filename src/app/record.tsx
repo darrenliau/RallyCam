@@ -37,7 +37,7 @@ import { CropGuard } from '../analysis/cropGuard';
 import { courtRegion } from '../analysis/courtRegion';
 import { ModelTrackFilter } from '../analysis/modelTrack';
 import { PlayerMotion } from '../analysis/playerMotion';
-import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, serveProblem, type Verdict } from '../analysis/rallyEnd';
+import { CONTINUE_S, isContinuation, isRallyOver, judgeRally, judgeServe, serveProblem, type Verdict } from '../analysis/rallyEnd';
 import { addRally, editRally, newMatch, sideLabel, undoLast } from '../engine/scoring';
 import { formatClock, resultLine } from '../engine/format';
 import type { Court, MatchConfig, MatchState, Side } from '../engine/types';
@@ -394,8 +394,10 @@ export default function Record() {
       return floorPosition(mapRef.current, frameToScreen({ x, y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }));
     }, (hit) => {
       // Who hit the shuttle: the player nearest to it in the picture. Their spot on the floor, and the time, give the speed of the shot.
+      // undefined: no player is being tracked, so nothing is known. null: players are tracked but none is near the shuttle, so it was not hit.
+      if (!latest.current.tracks.some((t) => !t.lost)) return undefined;
       const h = hitterSide(frameToScreen({ x: hit.x, y: hit.y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }), latest.current.tracks, mapRef.current);
-      return h ? { u: h.track.u, v: h.track.v } : undefined;
+      return h ? { u: h.track.u, v: h.track.v } : null;
     }),
     [],
   );
@@ -575,7 +577,8 @@ export default function Record() {
             const byParity: Side = trace.shots % 2 === 1 ? sv2.side : sv2.side === 'A' ? 'B' : 'A';
             const named = hitState.current.side;
             if (named) { if (named === byParity) hitCheck.current.agree += 1; else hitCheck.current.differ += 1; }
-            verdict = judgeRally(trace, now, ctx.singles, calm, named ?? byParity);
+            // only the serve was seen: an ace or a service fault, decided by where the serve came down; otherwise by where the last shot did
+            verdict = trace.shots === 1 ? judgeServe(trace, now, ctx.singles, { side: sv2.side, court: sv2.court }, calm) : judgeRally(trace, now, ctx.singles, calm, named ?? byParity);
             if (!verdict) {
               // over, but nobody can say who won (the shuttle vanished in the air, or too few shots): not a point, start looking again
               hitCheck.current.undecided += 1;

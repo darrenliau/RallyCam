@@ -207,3 +207,36 @@ describe('ShuttleEstimator with the hitters known', () => {
     expect(est.stats(t)!.speedKmh).toBe(0);
   });
 });
+
+describe('ShuttleEstimator: a turn with nobody near is not a hit', () => {
+  const tracked = (nearby: boolean) => () => (nearby ? { u: 0.5, v: 0.5 } : null);
+
+  it('counts a turn near a player as a shot, and not a turn with nobody near', () => {
+    const near = new ShuttleEstimator(identity, tracked(true));
+    let t = fly(near, 0.2, 0.8, 0, 0.5);
+    t = fly(near, 0.8, 0.2, t + 1 / 60, 0.5);
+    expect(near.stats(t)!.shots).toBe(2);
+
+    const away = new ShuttleEstimator(identity, tracked(false));
+    t = fly(away, 0.2, 0.8, 0, 0.5);
+    t = fly(away, 0.8, 0.2, t + 1 / 60, 0.5);
+    expect(away.stats(t)!.shots).toBe(1);        // only the serve; the turn (a ceiling, a wall, the net tape) was not a hit
+    expect(away.trace().strays).toBe(1);
+  });
+
+  it('still counts turns when players are not being tracked at all', () => {
+    const est = new ShuttleEstimator(identity, () => undefined);
+    let t = fly(est, 0.2, 0.8, 0, 0.5);
+    t = fly(est, 0.8, 0.2, t + 1 / 60, 0.5);
+    expect(est.stats(t)!.shots).toBe(2);
+    expect(est.trace().strays).toBeUndefined();
+  });
+
+  it('forgets the strays for a new rally', () => {
+    const est = new ShuttleEstimator(identity, tracked(false));
+    let t = fly(est, 0.2, 0.8, 0, 0.5);
+    t = fly(est, 0.8, 0.2, t + 1 / 60, 0.5);
+    est.newRally();
+    expect(est.trace().strays).toBeUndefined();
+  });
+});

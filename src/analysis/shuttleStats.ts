@@ -56,6 +56,7 @@ export class ShuttleEstimator {
   // Speed of a shot from where the two players stood at its two hits (see shotSpeed.ts); only when `hitterAt` is given
   private prevShot: { t: number; floor: Floor } | null = null;
   private samplesSinceHit = 0;
+  private strays = 0;
 
   /**
    * `toFloor` maps a frame position to court coordinates (0..1 across and along the court). It sets `air` when the point cannot be
@@ -63,13 +64,15 @@ export class ShuttleEstimator {
    */
   /**
    * `hitterAt` says where on the floor the player who hit the shuttle was standing, given where the shuttle was in the frame at the hit
-   * (the nearest player in the picture). With it, a shot's speed comes from the two players' positions and the time between the hits,
-   * which works for a shuttle in the air; without it, the speed is taken from the shuttle's own floor positions, which only makes
-   * sense for one that is low over the floor.
+   * (the nearest player in the picture). It returns `undefined` when players are not being tracked (nothing is known), and `null`
+   * when they are but none is near the shuttle. With it, a shot's speed comes from the two players' positions and the time between
+   * the hits, which works for a shuttle in the air; without it, the speed is taken from the shuttle's own floor positions, which only
+   * makes sense for one that is low over the floor. A change of direction with nobody near (`null`) is not a hit: it is the ceiling, a
+   * wall, the net tape or a tracking glitch, so it is not counted as a shot (and does not flip who is thought to have hit last).
    */
   constructor(
     private toFloor: (x: number, y: number) => { u: number; v: number; air?: boolean },
-    private hitterAt?: (hit: { t: number; x: number; y: number }) => Floor | undefined,
+    private hitterAt?: (hit: { t: number; x: number; y: number }) => Floor | null | undefined,
   ) {}
 
   newRally() {
@@ -88,6 +91,7 @@ export class ShuttleEstimator {
     this.lastFloor = null;
     this.prevShot = null;
     this.samplesSinceHit = 0;
+    this.strays = 0;
   }
 
   push(s: ShuttleSample) {
@@ -138,8 +142,13 @@ export class ShuttleEstimator {
       const dot = vel.x * prev.x + vel.y * prev.y;
       const norm = Math.hypot(vel.x, vel.y) * Math.hypot(prev.x, prev.y);
       if (norm > 0 && dot / norm < -0.2 && s.t - this.lastHitT >= MIN_HIT_GAP_S) {
-        if (!this.hitterAt) { this.lastShotKmh = this.peakKmh; this.peakKmh = 0; }
-        this.count(s.t, last.u, last.v, last.air, last);
+        const hitter = this.hitterAt?.({ t: s.t, x: last.x, y: last.y });
+        if (hitter === null) {
+          this.strays += 1; // it turned with nobody near it: not a hit
+        } else {
+          if (!this.hitterAt) { this.lastShotKmh = this.peakKmh; this.peakKmh = 0; }
+          this.count(s.t, last.u, last.v, last.air, last, hitter);
+        }
       }
     }
     this.prevVel = vel;
@@ -148,17 +157,16 @@ export class ShuttleEstimator {
     if (!air) this.lastFloor = { t: s.t, u, v };
   }
 
-  private count(t: number, u: number, v: number, air: boolean, at: { x: number; y: number }) {
+  private count(t: number, u: number, v: number, air: boolean, at: { x: number; y: number }, hitter?: Floor | null) {
     this.shots += 1;
     this.lastHitT = t;
     this.hit = { t, u, v, ...(air ? { air } : {}) };
     this.hitImage = { t, x: at.x, y: at.y };
-    if (this.hitterAt) this.measureShot(t, at);
+    if (this.hitterAt) this.measureShot(t, hitter === undefined ? this.hitterAt({ t, x: at.x, y: at.y }) : hitter);
   }
 
   /** The shot that ended with this hit: from the previous hitter's spot to this one, in the time between. */
-  private measureShot(t: number, at: { x: number; y: number }) {
-    const floor = this.hitterAt!({ t, x: at.x, y: at.y });
+  private measureShot(t: number, floor: Floor | null | undefined) {
     const prev = this.prevShot;
     if (prev) {
       const r = floor && this.samplesSinceHit >= MIN_SAMPLES_PER_SHOT ? shotSpeed(prev.floor, floor, t - prev.t) : null;
@@ -175,6 +183,7 @@ export class ShuttleEstimator {
       shots: this.shots, lastHit: this.hit, firstSeen: this.first, descending: !!this.lastVel && this.lastVel.y > 0,
       lastSeen: l ? { t: l.t, u: l.u, v: l.v, ...(l.air ? { air: true } : {}) } : null,
       lastFloor: this.lastFloor, hitImage: this.hitImage, firstImage: this.firstImage,
+      ...(this.strays ? { strays: this.strays } : {}),
     };
   }
 
