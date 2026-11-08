@@ -6,8 +6,8 @@ import type { Track } from '../analysis/players';
 export interface TagInfo { name: string; color: string }
 
 /**
- * Court outline, a ring under each tracked player's feet and a name tag above them.
- * Rings and tags are sized from the camera perspective, so players near the camera look bigger.
+ * Court outline and a ring under each tracked player's feet (no name tags: they crowd the picture).
+ * Rings are sized from the camera perspective, so players near the camera look bigger.
  */
 export function PlayerOverlay({
   map, width, height, tracks, tagFor, selected, onTagPress, showCourt = true,
@@ -35,14 +35,20 @@ export function PlayerOverlay({
         ))}
       </Svg>
       {placed.map(({ t, foot, rx, tag }) => (
+        // No name on the picture. The ring and the body above it are a tap target: tap one player, then another, to swap who is who.
         <Pressable
           key={t.id}
           accessibilityRole="button"
-          accessibilityLabel={`${tag.name} tag. Tap, then tap another tag to swap players.`}
+          accessibilityLabel={`${tag.name}. Tap, then tap another player to swap them.`}
           onPress={() => onTagPress(t.id)}
-          style={[s.tag, { left: foot.x - 50, top: foot.y - rx * 2.6 - 24, borderLeftColor: tag.color }, selected === t.id && s.sel]}
+          style={{ position: 'absolute', left: foot.x - rx - 10, top: foot.y - rx * 2.6 - 14, width: 2 * rx + 20, height: rx * 2.6 + rx * 0.34 + 28 }}
         >
-          <Text numberOfLines={1} style={s.tagText}>{tag.name}</Text>
+          {selected === t.id && (
+            // only the player you picked shows a name, so you can see who you are about to swap
+            <View style={[s.chip, { borderLeftColor: tag.color, left: rx + 10 - 50, top: -26 }]}>
+              <Text numberOfLines={1} style={s.chipText}>{tag.name}</Text>
+            </View>
+          )}
         </Pressable>
       ))}
     </View>
@@ -50,7 +56,6 @@ export function PlayerOverlay({
 }
 
 const s = StyleSheet.create({
-  tag: { position: 'absolute', width: 100, alignItems: 'center', paddingVertical: 3, borderRadius: 6, borderLeftWidth: 4, backgroundColor: 'rgba(5,9,10,0.85)' },
-  sel: { backgroundColor: '#fff' },
-  tagText: { color: '#fff', fontSize: 12, fontWeight: '700' },
+  chip: { position: 'absolute', width: 100, alignItems: 'center', paddingVertical: 3, borderRadius: 6, borderLeftWidth: 4, backgroundColor: '#fff' },
+  chipText: { color: '#05090A', fontSize: 12, fontWeight: '700' },
 });

@@ -285,3 +285,16 @@ describe('training sessions', () => {
     expect(trainingScene.items.length).toBeLessThan(game.items.length);
   });
 });
+
+describe('player rings', () => {
+  it('draws one ring per tracked player and no name tags', () => {
+    const config: MatchConfig = { type: 'singles', bestOf: 1, firstServer: 'A', players: { A: ['Zed'], B: ['Quin'] } };
+    const snapshot: OverlaySnapshot = { t: 0, tracks: [{ id: 0, u: 0.5, v: 0.8 }, { id: 1, u: 0.4, v: 0.2 }], assign: [0, 1], dist: [1, 2] };
+    const corners = { farLeft: { x: 0.3, y: 0.3 }, farRight: { x: 0.7, y: 0.3 }, nearRight: { x: 0.95, y: 0.8 }, nearLeft: { x: 0.05, y: 0.8 } };
+    const scene = buildLiveScene({ config, state: replay(config, []), snapshot, corners, frameAspect: 16 / 9 });
+    const rings = scene.items.filter((i) => i.k === 's' && i.l === 20);
+    expect(rings.length).toBe(2);
+    // the tags used to be drawn on layers 21 to 23, above the ring (the score card and the distance card still show the names)
+    expect(scene.items.filter((i) => i.l >= 21 && i.l <= 23).length).toBe(0);
+  });
+});

@@ -281,7 +281,8 @@ function distanceCard(c: Ctx, names: string[], colorOf: (p: number) => string, s
 }
 
 /** Ring under each player's feet and a name tag above them, gliding to the next snapshot's position. */
-function players(c: Ctx, seg: Seg, map: CourtMap, names: string[], colorOf: (p: number) => string) {
+/** A ring under each tracked player's feet, in that player's colour. No name tag: it crowds the picture, and the colour matches the distance card and the court map. */
+function players(c: Ctx, seg: Seg, map: CourtMap, colorOf: (p: number) => string) {
   const snap = seg.snap!;
   const k = c.k;
   for (const t of snap.tracks) {
@@ -300,15 +301,6 @@ function players(c: Ctx, seg: Seg, map: CourtMap, names: string[], colorOf: (p: 
     // ring (outline only)
     shape(c, 20, seg.start, seg.end, ellipse(a.rx, a.rx * 0.34), { x: a.foot.x - a.rx, y: a.foot.y - a.rx * 0.34 }, color, 0,
       { stroke: { width: 2.5 * k, color }, move: mv ? { to: { x: b.foot.x - b.rx, y: b.foot.y - b.rx * 0.34 } } : undefined });
-    // name tag
-    const name = names[p] ?? '';
-    const tw = (name.length * 5.8 + 18) * k;
-    const th = 22 * k;
-    const topA = { x: a.foot.x - tw / 2, y: a.foot.y - a.rx * 2.6 - 24 * k };
-    const topB = { x: b.foot.x - tw / 2, y: b.foot.y - b.rx * 2.6 - 24 * k };
-    shape(c, 21, seg.start, seg.end, roundRect(tw, th, 6 * k), topA, BACK, 0.85, { move: mv ? { to: topB } : undefined });
-    shape(c, 22, seg.start, seg.end, `m 0 0 l ${n1(4 * k)} 0 l ${n1(4 * k)} ${n1(th)} l 0 ${n1(th)}`, topA, color, 1, { move: mv ? { to: topB } : undefined });
-    label(c, 23, seg.start, seg.end, name, { x: topA.x + tw / 2 + 2 * k, y: topA.y + 3 * k }, 12, '#FFFFFF', { bold: true, anchor: 8, move: mv ? { to: { x: topB.x + tw / 2 + 2 * k, y: topB.y + 3 * k } } : undefined });
   }
 }
 
@@ -345,7 +337,7 @@ export function buildScene(input: AssInput): Scene {
   for (const seg of segs) {
     if (!seg.snap) continue;
     mapDots(c, seg.snap, colorOf, seg.start, seg.end);
-    players(c, seg, map, names, colorOf);
+    players(c, seg, map, colorOf);
   }
   return { width: resX, height: resY, items: c.items };
 }
@@ -429,7 +421,7 @@ export function buildLiveScene(input: LiveInput): Scene {
   if (snapshot) {
     const map = courtMap(cornersInBox(input.corners ?? { farLeft: { x: 0.3, y: 0.3 }, farRight: { x: 0.7, y: 0.3 }, nearRight: { x: 0.95, y: 0.8 }, nearLeft: { x: 0.05, y: 0.8 } }, resX, resY));
     mapDots(c, snapshot, colorOf, 0, LIVE_END);
-    players(c, { start: 0, end: LIVE_END, snap: snapshot }, map, names, colorOf);
+    players(c, { start: 0, end: LIVE_END, snap: snapshot }, map, colorOf);
   }
   if (input.shuttleMap) shuttleOnMap(c, input.shuttleMap, 0, LIVE_END);
   // The shuttle's recent path, newest dot biggest
