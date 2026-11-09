@@ -14,7 +14,7 @@ import { MatchOverlay } from '../../components/MatchOverlay';
 import { buildAss } from '../../export/ass';
 import { cancelExport, canExportOnDevice, exportVideoWithOverlay } from '../../export/nativeExport';
 import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFiles';
-import { analysisVideoUriFor, extensionOf, fileBytes, fileExists, formatBytes, keepFile, removeFile, shuttleLogUriFor } from '../../export/storage';
+import { analysisVideoUriFor, extensionOf, fileBytes, fileExists, formatBytes, keepFile, removeFile, shuttleLogUriFor, videosFolderStats } from '../../export/storage';
 import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
 import { HIDE_EMPTY_SHUTTLE } from '../../config';
@@ -28,7 +28,10 @@ export default function MatchReview() {
   useEffect(reload, [reload]);
 
   // Once the overlay has been drawn into a new video, that is the one to play.
-  const player = useVideoPlayer(match?.overlayVideoUri ?? match?.videoUri ?? null);
+  // The file the game says it has may not be on the phone (it was deleted, or the app's data was cleared): say so instead of showing a player that cannot play
+  const playUri = match?.overlayVideoUri ?? match?.videoUri ?? null;
+  const videoMissing = !!playUri && !fileExists(playUri);
+  const player = useVideoPlayer(videoMissing ? null : playUri);
 
   // The overlay saved while recording is drawn over the video again, in step with the playback time.
   const { width: screenW } = useWindowDimensions();
@@ -97,6 +100,8 @@ export default function MatchReview() {
     await deleteMatch(match.id);
     router.back();
   };
+  const hasVideo = !!match.videoUri && !videoMissing;
+  const gamesFolder = videoMissing ? videosFolderStats() : null;
   const videoBytes = fileBytes(match.videoUri) + (match.overlayVideoUri && match.overlayVideoUri !== match.videoUri ? fileBytes(match.overlayVideoUri) : 0);
   const deleteVideo = () =>
     Alert.alert('Delete the video?', 'The video file is removed from this phone. The score and stats stay.', [
@@ -121,7 +126,15 @@ export default function MatchReview() {
         <Text style={s.muted}>{new Date(match.createdAt).toLocaleString()}{match.venueName ? ` · ${match.venueName}` : ''} · {state.config.training ? 'Training' : resultLine(state)} {!state.config.training && state.config.bestOf > 1 ? `(${gameScores(state)})` : ''}</Text>
       </View>
 
-      {match.videoUri && overlay && !match.overlayVideoUri ? (
+      {videoMissing && (
+        <Card style={{ gap: 6, borderColor: colors.amber }}>
+          <Label>The video is not on this phone</Label>
+          <Text style={s.muted}>The score and stats for this game are kept, but its video file cannot be found. It was deleted, or the app's files were cleared (deleting the app, or installing a copy signed differently over it, does that).</Text>
+          <Text style={s.muted}>Looked for: {baseName(playUri!)}. The games folder holds {gamesFolder?.count ?? 0} video file{gamesFolder?.count === 1 ? '' : 's'}. You can see it in the Files app under On My iPhone, RallyCam.</Text>
+        </Card>
+      )}
+
+      {hasVideo && overlay && !match.overlayVideoUri ? (
         <>
           <Pressable onPress={() => setShowOverlay((v) => !v)} accessibilityRole="button">
             <Text style={s.toggle}>Overlay: {showOverlay ? 'on' : 'off'} (tap to switch)</Text>
@@ -161,13 +174,13 @@ export default function MatchReview() {
             );
           })()}
         </>
-      ) : match.videoUri ? (
+      ) : hasVideo ? (
         <VideoView player={player} style={overlay ? { width: screenW - 32, aspectRatio: overlay.frameAspect, borderRadius: 14, backgroundColor: '#000' } : s.video} nativeControls contentFit="contain" />
-      ) : (
+      ) : videoMissing ? null : (
         <Card><Text style={s.muted}>No video was saved for this match.</Text></Card>
       )}
 
-      {match.videoUri && overlay && canExportOnDevice && (
+      {hasVideo && overlay && canExportOnDevice && (
         <Card style={{ gap: 8 }}>
           <Label>Video with the overlay</Label>
           {exporting != null ? (
@@ -192,7 +205,7 @@ export default function MatchReview() {
         </Card>
       )}
 
-      {match.videoUri && overlay && (
+      {hasVideo && overlay && (
         <Card style={{ gap: 8 }}>
           <Label>Share with the overlay</Label>
           <Text style={s.muted}>
