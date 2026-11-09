@@ -85,6 +85,14 @@ final class CaptureController: NSObject {
   var onShuttle: (([String: Any]) -> Void)?
   /// Frames of the shuttle model (see ShuttleModel.swift): { frames: [{ t, x?, y? }], predictMs }
   var onShuttleModel: (([String: Any]) -> Void)?
+  /// Body poses of the players nearest the shuttle: [{t, x, y, w, h, kp}] with the box and 13 joints (x, y, confidence) in frame fractions, top left origin.
+  var onPose: (([[String: Any]]) -> Void)?
+  private let poseQueue = DispatchQueue(label: "rallycam.capture.pose", qos: .utility)
+  private var poseOn = false            // guarded by detectLock
+  private var poseBusy = false
+  private var lastPose = -Double.infinity
+  private var poseGap = 0.12            // seconds between passes; a hot phone slows it, a very hot one stops it
+  private var poseFocus: CGPoint?       // where the shuttle is, so the players nearest it are looked at
 
   // Detection
   private let detectLock = NSLock()
@@ -302,6 +310,7 @@ final class CaptureController: NSObject {
       }
       NSLog("RallyCam: system pressure \(level)")
       WatchBridge.shared.setPressure(level)
+      self?.setPosePressure(level)
       self?.onPressure?(level)
     }
   }
@@ -585,6 +594,108 @@ final class CaptureController: NSObject {
       self.detectLock.unlock()
       self.onDetections?(all.map { $0.dictionary })
     }
+  }
+
+  // MARK: body pose
+
+  /// Switches body-pose finding on or off. It looks at the (at most two) players nearest the shuttle, a few times a second, so it costs little.
+  func setPose(enabled: Bool) {
+    detectLock.lock()
+    poseOn = enabled
+    detectLock.unlock()
+  }
+
+  /// Where the shuttle is (frame fractions, top left origin), or nil when not seen.
+  func setPoseFocus(_ point: CGPoint?) {
+    detectLock.lock()
+    poseFocus = point
+    detectLock.unlock()
+  }
+
+  /// A hot phone does less: serious pressure makes it a third as often, critical turns it off, so the camera and the recording come first.
+  private func setPosePressure(_ level: String) {
+    detectLock.lock()
+    switch level {
+    case "serious": poseGap = 0.36
+    case "critical", "shutdown": poseGap = .infinity
+    default: poseGap = 0.12
+    }
+    detectLock.unlock()
+  }
+
+  private static let poseJoints: [VNHumanBodyPoseObservation.JointName] = [
+    .nose, .leftShoulder, .rightShoulder, .leftElbow, .rightElbow, .leftWrist, .rightWrist,
+    .leftHip, .rightHip, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle,
+  ]
+
+  private func poseIfDue(_ pixelBuffer: CVPixelBuffer, time: Double) {
+    let now = CACurrentMediaTime()
+    detectLock.lock()
+    let fresh = now - peopleAt < 0.4
+    let people = fresh ? self.people : []
+    let focus = poseFocus
+    let due = poseOn && !poseBusy && !people.isEmpty && now - lastPose >= poseGap
+    if due { poseBusy = true; lastPose = now }
+    detectLock.unlock()
+    guard due else { return }
+
+    // the two players nearest the shuttle: the distance is to the box, so a player reaching up for it counts as near
+    func distance(_ r: CGRect) -> CGFloat {
+      guard let f = focus else { return 0 }
+      let dx = max(r.minX - f.x, 0, f.x - r.maxX)
+      let dy = max(r.minY - f.y, 0, f.y - r.maxY)
+      return hypot(dx, dy)
+    }
+    let chosen = Array(people.sorted { distance($0) < distance($1) }.prefix(2))
+    poseQueue.async {
+      defer {
+        self.detectLock.lock()
+        self.poseBusy = false
+        self.detectLock.unlock()
+      }
+      var found: [[String: Any]] = []
+      for rect in chosen {
+        if let d = self.pose(of: rect, in: pixelBuffer, time: time) { found.append(d) }
+      }
+      if !found.isEmpty { self.onPose?(found) }
+    }
+  }
+
+  /// The joints of the person in `rect` (frame fractions). The picture is cut out with room around it (the racket arm goes up over the head), scaled up when the person is small.
+  private func pose(of rect: CGRect, in pixelBuffer: CVPixelBuffer, time: Double) -> [String: Any]? {
+    let padX = rect.width * 0.25, padTop = rect.height * 0.2, padBottom = rect.height * 0.05
+    let area = CGRect(x: max(0, rect.minX - padX), y: max(0, rect.minY - padTop), width: 0, height: 0)
+    let right = min(1, rect.maxX + padX), bottom = min(1, rect.maxY + padBottom)
+    let box = CGRect(x: area.minX, y: area.minY, width: right - area.minX, height: bottom - area.minY)
+    guard box.width > 0, box.height > 0 else { return nil }
+
+    let fw = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
+    let fh = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
+    let crop = CGRect(x: box.minX * fw, y: (1 - box.maxY) * fh, width: box.width * fw, height: box.height * fh)   // Core Image: origin bottom left
+    let scale = min(3, 320 / crop.height)
+    let outW = max(16, Int(crop.width * scale))
+    let outH = max(16, Int(crop.height * scale))
+    var small: CVPixelBuffer?
+    CVPixelBufferCreate(nil, outW, outH, kCVPixelFormatType_32BGRA, [kCVPixelBufferMetalCompatibilityKey as String: true] as CFDictionary, &small)
+    guard let target = small else { return nil }
+    let image = CIImage(cvPixelBuffer: pixelBuffer)
+      .cropped(to: crop)
+      .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+      .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+    ciContext.render(image, to: target)
+
+    let request = VNDetectHumanBodyPoseRequest()
+    do { try VNImageRequestHandler(cvPixelBuffer: target, options: [:]).perform([request]) } catch { return nil }
+    guard let observation = request.results?.first, let points = try? observation.recognizedPoints(.all) else { return nil }
+    var kp: [Double] = []
+    for name in CaptureController.poseJoints {
+      if let p = points[name], p.confidence > 0 {
+        kp += [Double(box.minX + p.location.x * box.width), Double(box.minY + (1 - p.location.y) * box.height), Double(p.confidence)]
+      } else {
+        kp += [0, 0, 0]
+      }
+    }
+    return ["t": time, "x": Double(rect.minX), "y": Double(rect.minY), "w": Double(rect.width), "h": Double(rect.height), "kp": kp]
   }
 
   /// Intersection over union of two boxes, 0 to 1.
@@ -1173,6 +1284,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
     }
 
     detectIfDue(pixelBuffer)
+    poseIfDue(pixelBuffer, time: CMTimeGetSeconds(pts))
     shuttleIfDue(pixelBuffer, time: pts)
     shuttleModelIfDue(pixelBuffer, time: pts)
     WatchBridge.shared.offer(pixelBuffer, time: CMTimeGetSeconds(pts))   // a small picture for the watch, when one is due

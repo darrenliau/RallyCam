@@ -107,6 +107,17 @@ export default function Settings() {
           {EXPERIMENTS && (
             <View style={s.row}>
               <View style={{ flex: 1 }}>
+                <Label>Shot types · experimental</Label>
+                <Text style={s.muted}>
+                  Names each shot (serve, clear, drop, smash, net shot, drive) and draws a stick figure of how it was hit, using the body pose of the players nearest the shuttle. Needs Shuttle tracking above to be on and the players to be tracked. A hot phone slows it down or stops it.
+                </Text>
+              </View>
+              <Switch value={settings.shotTypes} onValueChange={(v) => updateSettings({ shotTypes: v })} accessibilityLabel="Shot types" />
+            </View>
+          )}
+          {EXPERIMENTS && (
+            <View style={s.row}>
+              <View style={{ flex: 1 }}>
                 <Label>Follow camera moves · experimental</Label>
                 <Text style={s.muted}>
                   While recording, checks every few seconds whether the phone or tripod has moved. A small steady move moves the court with it; a big one shows a warning to set the court again. Turn it off if the court ever jumps for no reason.

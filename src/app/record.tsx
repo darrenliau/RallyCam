@@ -6,7 +6,7 @@ import { router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
+import { COURT_L, COURT_W, courtMap, defaultCorners, denormalizeCorners, normalizeCorners, type Corners } from '../analysis/court';
 import { DetectionBridge, FRAME_ASPECT } from '../analysis/detector';
 import { cornersToFrame, type OverlaySnapshot } from '../analysis/overlay';
 import { frameToScreen, modelCrop, roiFromCorners, shuttleRoiFromCorners } from '../analysis/preprocess';
@@ -35,6 +35,9 @@ import { decodeBase64 } from '../analysis/base64';
 import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../analysis/courtLines';
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
+import { decodePose, hitPose, PoseHistory } from '../analysis/pose';
+import { toShotRecord } from '../analysis/shotRecord';
+import type { ShotRecord } from '../analysis/overlay';
 import { courtOfServer, inferWinnerFromServe } from '../analysis/nextServe';
 import { CropGuard } from '../analysis/cropGuard';
 import { courtRegion } from '../analysis/courtRegion';
@@ -48,6 +51,13 @@ import { colors } from '../theme';
 
 // Remembered between matches in this session so the user does not re-align every time.
 const savedCorners: Record<string, Corners> = {};
+
+/** The stats as saved in a snapshot: the stick figure is saved once with the shot, not four times a second. */
+function withoutPose(sh: ShuttleStats): ShuttleStats {
+  if (!sh.lastShot?.pose) return sh;
+  const { pose: _pose, ...rest } = sh.lastShot;
+  return { ...sh, lastShot: rest };
+}
 
 export default function Record() {
   useKeepAwake();
@@ -259,6 +269,8 @@ export default function Record() {
   // Recording starts only once the camera is ready and the court is locked (a saved venue court counts as locked).
   const [cameraReady, setCameraReady] = useState(false);
   const [recording, setRecording] = useState(false);
+  const recordingRef = useRef(false);
+  recordingRef.current = recording;
 
   // Drawing the court from the camera: a few pictures a moment apart, the lines found in each, the best agreeing one kept as the starting corners.
   const [courtFinder, setCourtFinder] = useState<'idle' | 'finding' | 'found' | 'failed'>('idle');
@@ -369,7 +381,7 @@ export default function Record() {
         tracks: tr.map((x) => ({ id: x.id, u: r3(x.u), v: r3(x.v), ...(x.lost ? { lost: x.lost } : {}) })),
         assign: [...assignRef.current],
         dist: names.map((_, i) => (tracking ? r1(meter.metres(i)) : null)),
-        ...(sh ? { shuttle: sh } : {}),
+        ...(sh ? { shuttle: withoutPose(sh) } : {}),
       });
     }, 250);
     return () => clearInterval(id);
@@ -397,6 +409,11 @@ export default function Record() {
 
   // --- Experimental shuttle tracking (Settings): the camera looks for small fast things, the estimator turns that into numbers ---
   const shuttleOn = settings.experimentalShuttle && usesNativeCapture && !footage;
+  // Body poses of the players (for naming shots) and the shots named so far, saved with the game
+  const poseHistory = useRef(new PoseHistory(5)).current;
+  const shotRecords = useRef<ShotRecord[]>([]);
+  const lastShot = useRef<{ at: number; shot: NonNullable<ShuttleStats['lastShot']> } | null>(null);
+  const shotTypesOn = shuttleOn && settings.shotTypes;
   const geometry = () => ({ frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height });
   const estimator = useMemo(
     () => new ShuttleEstimator((x, y) => {
@@ -407,8 +424,9 @@ export default function Record() {
       // undefined: no player is being tracked, so nothing is known. null: players are tracked but none is near the shuttle, so it was not hit.
       if (!latest.current.tracks.some((t) => !t.lost)) return undefined;
       const h = hitterSide(frameToScreen({ x: hit.x, y: hit.y }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }), latest.current.tracks, mapRef.current);
-      return h ? { u: h.track.u, v: h.track.v } : null;
-    }),
+      return h ? { u: h.track.u, v: h.track.v, track: h.track.id } : null;
+    }, (track, t) => hitPose(poseHistory.of(track), t)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
     [],
   );
   // The trained shuttle model (TrackNetV3), when switched on in Settings and present in the build. While it is loading or if it
@@ -518,6 +536,29 @@ export default function Record() {
     return () => { sub.remove(); clearInterval(id); native.setShuttleModel(false); modelFilter.reset(); setModelStatus(null); };
   }, [modelWanted, modelFilter, estimator]);
 
+  // Body poses: the native side looks at the players nearest the shuttle; each pose goes to the track standing where its feet are
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !shotTypesOn) return;
+    native.setPose(true);
+    const sub = native.addListener('onPose', (e) => {
+      for (const ev of e.poses) {
+        const sample = decodePose(ev, FRAME_ASPECT);
+        if (!sample) continue;
+        const feet = floorPosition(mapRef.current, frameToScreen({ x: sample.box.x + sample.box.w / 2, y: sample.box.y + sample.box.h }, geometry()));
+        let best: { id: number; d: number } | null = null;
+        for (const t of latest.current.tracks) {
+          if (t.lost) continue;
+          const d = Math.hypot((t.u - feet.u) * COURT_W, (t.v - feet.v) * COURT_L);
+          if (d <= 2 && (!best || d < best.d)) best = { id: t.id, d };
+        }
+        if (best) poseHistory.add(best.id, sample.pose);
+      }
+    });
+    return () => { sub.remove(); native.setPose(false); poseHistory.clear(); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shotTypesOn]);
+
   useEffect(() => {
     const native = Capture;
     if (!native || !shuttleOn) return;
@@ -527,7 +568,21 @@ export default function Record() {
     });
     const id = setInterval(() => {
       const now = lastShuttleT.current;
-      setShuttle(estimator.stats(now));
+      const stats = estimator.stats(now);
+      if (shotTypesOn) {
+        const trail = estimator.trail(now, 0.4);
+        const tip = trail[trail.length - 1];
+        native.setPoseFocus(tip ? tip.x : NaN, tip ? tip.y : NaN);
+        for (const e of estimator.takeShots()) {
+          const owner = e.track != null ? assignRef.current[e.track] ?? e.track : null;
+          const player = owner != null && owner < names.length ? owner : null;
+          const tMs = Date.now() - startedAt.current - (now - e.t) * 1000;
+          if (recordingRef.current) shotRecords.current.push(toShotRecord(e, tMs, player));
+          lastShot.current = { at: now, shot: { type: e.type, player: player != null ? names[player] : '', number: e.number, confidence: e.confidence, ...(e.pose ? { pose: e.pose } : {}) } };
+        }
+      }
+      const shown = shotTypesOn && lastShot.current && now - lastShot.current.at < 5 ? lastShot.current.shot : null;
+      setShuttle(stats && shown ? { ...stats, lastShot: shown } : stats);
       let onMap = estimator.onMap(now, judgeCtx.current.singles);
       if (onMap?.phase === 'landed') landing.current = { at: Date.now(), mark: onMap };
       else if (onMap) landing.current = null;
@@ -633,7 +688,7 @@ export default function Record() {
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shuttleOn, estimator, modelWanted, modelActive]);
+  }, [shuttleOn, estimator, modelWanted, modelActive, shotTypesOn, names]);
 
   // Once the court is locked, the model is shown only the court and the air above it, so the shuttle is bigger to it
   useEffect(() => {
@@ -792,6 +847,7 @@ export default function Record() {
         frameAspect: FRAME_ASPECT,
         corners: cornersToFrame(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height }),
         snapshots: snapshots.current,
+        ...(shotRecords.current.length ? { shots: shotRecords.current } : {}),
       });
     }
     if (shuttleLogUri.current) {

@@ -17,6 +17,28 @@ export interface OverlaySnapshot {
   shuttle?: ShuttleStats;
 }
 
+/**
+ * One named shot, saved with the game so the Review screen can list them and draw the stick figure, and so a 3D replay can be made later
+ * (where the hitter stood and where the shuttle went, on the court floor, with the time and the body pose of the hit).
+ */
+export interface ShotRecord {
+  /** Milliseconds since recording started, at the hit. */
+  t: number;
+  /** Position in the rally, 1 is the serve. */
+  number: number;
+  /** Player index (as in the names list), or null when not known. */
+  player: number | null;
+  type: string;
+  confidence: number;
+  kmh: number | null;
+  metres: number | null;
+  height?: 'overhead' | 'side' | 'low';
+  /** Packed stick figure, see pose.ts packPose. */
+  pose?: number[];
+  from: { u: number; v: number } | null;
+  to: { u: number; v: number } | null;
+}
+
 export interface OverlayData {
   version: 1;
   /** Width / height of the recorded video. */
@@ -24,6 +46,8 @@ export interface OverlayData {
   /** Court corners as fractions of the recorded video frame. */
   corners: Corners | null;
   snapshots: OverlaySnapshot[];
+  /** The named shots, when shot types were on. */
+  shots?: ShotRecord[];
 }
 
 /** A snapshot older than this is not shown (the tracker was off or lost everyone). */

@@ -38,7 +38,7 @@ public class RallyCamCaptureModule: Module {
   public func definition() -> ModuleDefinition {
     Name("RallyCamCapture")
 
-    Events("onDetections", "onError", "onInterruption", "onPressure", "onShuttle", "onShuttleModel", "onWatchCommand")
+    Events("onDetections", "onError", "onInterruption", "onPressure", "onShuttle", "onShuttleModel", "onPose", "onWatchCommand")
 
     OnCreate {
       let controller = CaptureController.shared
@@ -50,6 +50,9 @@ public class RallyCamCaptureModule: Module {
       }
       controller.onInterruption = { [weak self] interrupted, reason in
         DispatchQueue.main.async { self?.sendEvent("onInterruption", ["interrupted": interrupted, "reason": reason]) }
+      }
+      controller.onPose = { [weak self] poses in
+        DispatchQueue.main.async { self?.sendEvent("onPose", ["poses": poses]) }
       }
       controller.onShuttle = { [weak self] payload in
         DispatchQueue.main.async { self?.sendEvent("onShuttle", payload) }
@@ -148,6 +151,14 @@ public class RallyCamCaptureModule: Module {
     }
 
     // The shuttle model (TrackNetV3 on the Neural Engine). It reports positions with the onShuttleModel event, 8 frames at a time.
+    // Body pose of the players nearest the shuttle, a few times a second (onPose events). x and y are where the shuttle is (frame fractions); NaN when not seen.
+    Function("setPose") { (enabled: Bool) in
+      CaptureController.shared.setPose(enabled: enabled)
+    }
+    Function("setPoseFocus") { (x: Double, y: Double) in
+      CaptureController.shared.setPoseFocus(x.isNaN || y.isNaN ? nil : CGPoint(x: x, y: y))
+    }
+
     Function("setShuttleModel") { (enabled: Bool) in
       CaptureController.shared.setShuttleModel(enabled: enabled)
     }

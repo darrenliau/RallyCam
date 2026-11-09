@@ -240,3 +240,36 @@ describe('ShuttleEstimator: a turn with nobody near is not a hit', () => {
     expect(est.trace().strays).toBeUndefined();
   });
 });
+
+describe('ShuttleEstimator: naming the shots', () => {
+  const far = { u: 0.5, v: 0.1, track: 2 }, near = { u: 0.5, v: 0.9, track: 1 };
+  const hitterAt = (hit: { x: number }) => (hit.x < 0.5 ? near : far);
+  const pose = { height: 'overhead' as const, lift: 0.6, dt: 0, pose: { t: 0, aspect: 0.4, joints: Array(13).fill({ x: 0.5, y: 0.5 }) } };
+
+  it('names the serve when the return shows where it went, with the server\'s pose', () => {
+    const asked: [number, number][] = [];
+    const est = new ShuttleEstimator(identity, hitterAt, (track, t) => { asked.push([track, t]); return pose; });
+    let t = fly(est, 0.2, 0.8, 0, 1.2);
+    t = fly(est, 0.8, 0.2, t + 1 / 60, 1.2);
+    const shots = est.takeShots();
+    expect(shots).toHaveLength(1);
+    expect(shots[0].type).toBe('SERVE');
+    expect(shots[0].track).toBe(1);
+    expect(shots[0].height).toBe('overhead');
+    expect(shots[0].pose).toHaveLength(27);
+    expect(asked[0][0]).toBe(1);
+    expect(est.takeShots()).toHaveLength(0); // handed out once
+    expect(t).toBeGreaterThan(2);
+  });
+
+  it('names a shot without a pose too', () => {
+    const est = new ShuttleEstimator(identity, hitterAt);
+    let t = fly(est, 0.2, 0.8, 0, 1.2);
+    t = fly(est, 0.8, 0.2, t + 1 / 60, 1.2);
+    fly(est, 0.2, 0.8, t + 1 / 60, 1.2);
+    const shots = est.takeShots();
+    expect(shots.map((s) => s.number)).toEqual([1, 2]);
+    expect(shots[1].height).toBeUndefined();
+    expect(shots[1].confidence).toBeLessThan(0.6);
+  });
+});

@@ -4,7 +4,7 @@ export interface ShuttleStats {
   speedKmh: number;
   /** Shots seen in the current rally. */
   shots: number;
-  lastShot?: { type: string; player: string; number: number };
+  lastShot?: { type: string; player: string; number: number; confidence?: number; /** The stick figure of the hit, packed (see pose.ts packPose). */ pose?: number[] };
 }
 
 /**

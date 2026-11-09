@@ -44,6 +44,8 @@ type Events = {
   onPressure: (e: { level: string }) => void;
   onShuttle: (e: ShuttleEvent) => void;
   onShuttleModel: (e: ShuttleModelEvent) => void;
+  /** Body poses of the players nearest the shuttle (see src/analysis/pose.ts decodePose). */
+  onPose: (e: { poses: { t: number; x: number; y: number; w: number; h: number; kp: number[] }[] }) => void;
   /** A button pressed on the Apple Watch app. */
   onWatchCommand: (e: { command?: string; side?: string }) => void;
 };
@@ -64,6 +66,10 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   /** The next camera frame as a grey picture, shrunk by a whole number to about `maxWidth` pixels wide: { width, height, data: base64 of one byte per pixel }. For finding the court lines. */
   grabStill(maxWidth: number): Promise<{ width: number; height: number; data: string }>;
   /** TrackNetV3 on the Neural Engine. Needs the model file in the build (ios/Models/README.md). Positions arrive with onShuttleModel. */
+  /** Looks for body poses on the players nearest the shuttle. */
+  setPose(enabled: boolean): void;
+  /** Where the shuttle is, in frame fractions, so the nearest players are looked at. NaN when not seen. */
+  setPoseFocus(x: number, y: number): void;
   setShuttleModel(enabled: boolean): void;
   getShuttleModelStatus(): ShuttleModelStatus;
   /** Gives the shuttle model only this part of the frame (fractions, origin top left, 16:9 in pixels), or the whole frame when all are 0. Reported positions stay fractions of the whole frame. */

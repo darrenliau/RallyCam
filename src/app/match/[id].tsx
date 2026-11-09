@@ -17,6 +17,7 @@ import { baseName, shareOverlayFile, shareVideoFile } from '../../export/shareFi
 import { analysisVideoUriFor, extensionOf, fileBytes, fileExists, formatBytes, keepFile, removeFile, shuttleLogUriFor, videosFolderStats } from '../../export/storage';
 import * as Sharing from 'expo-sharing';
 import { ScoreChart } from '../../components/ScoreChart';
+import { ShotList } from '../../components/ShotList';
 import { HIDE_EMPTY_SHUTTLE } from '../../config';
 import { colors } from '../../theme';
 
@@ -242,6 +243,20 @@ export default function MatchReview() {
           <ScoreChart data={p} />
         </Card>
       ))}
+
+      {overlay?.shots && overlay.shots.length > 0 && (
+        <Card style={{ gap: 8 }}>
+          <Label>Shots · {overlay.shots.length} named</Label>
+          <Text style={s.muted}>The shot type comes from where the players stood, how long the shuttle took and how the racket hand was held at the hit (the stick figure). It is an estimate: a ? marks a guess. Tap a shot to jump the video to it.</Text>
+          <ShotList
+            shots={overlay.shots.slice(0, 60)}
+            names={[...state.config.players.A, ...state.config.players.B]}
+            colorOf={(p) => (p < state.config.players.A.length ? colors.near[p] : colors.far[p - state.config.players.A.length])}
+            onSeek={hasVideo ? (ms) => { player.currentTime = ms / 1000; player.play(); } : undefined}
+          />
+          {overlay.shots.length > 60 && <Text style={s.muted}>Showing the first 60 of {overlay.shots.length}.</Text>}
+        </Card>
+      )}
 
       <Label>Every point · tap a time to jump there</Label>
       {state.rallies.map((r, i) => {

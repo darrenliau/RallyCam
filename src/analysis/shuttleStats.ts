@@ -2,6 +2,26 @@ import { COURT_L, COURT_W } from './court';
 import type { ShuttleOnMap, ShuttleStats } from './shuttle';
 import { landingCall, type FloorPoint, type RallyTrace } from './rallyEnd';
 import { shotSpeed, type Floor } from './shotSpeed';
+import { classifyShot, type ShotResult } from './shots';
+import { packPose, type HitPose } from './pose';
+
+/** A hitter's spot on the floor, with the id of the track it is (when known) so the body pose of that player can be found. */
+export type Hitter = Floor & { track?: number };
+
+/** One shot, named, when the next hit (or the landing) showed where it went. */
+export interface ShotEvent extends ShotResult {
+  /** Position in the rally, 1 is the serve. */
+  number: number;
+  /** Camera time of the hit, in seconds. */
+  t: number;
+  /** Track of the player who hit it. */
+  track?: number;
+  from: Floor | null;
+  to: Floor | null;
+  /** How the racket hand was held, and the stick figure of the hit (see pose.ts packPose), when a body pose was seen. */
+  height?: 'overhead' | 'side' | 'low';
+  pose?: number[];
+}
 
 /** A confirmed shuttle position from the camera. x and y are fractions of the frame, t is in seconds. */
 export interface ShuttleSample { t: number; x: number; y: number }
@@ -54,7 +74,9 @@ export class ShuttleEstimator {
   private firstImage: { t: number; x: number; y: number } | null = null;
   private lastFloor: FloorPoint | null = null;
   // Speed of a shot from where the two players stood at its two hits (see shotSpeed.ts); only when `hitterAt` is given
-  private prevShot: { t: number; floor: Floor } | null = null;
+  private prevShot: { t: number; floor: Floor; track?: number; number: number } | null = null;
+  private shotLog: ShotEvent[] = [];
+  private shotsTaken = 0;
   private samplesSinceHit = 0;
   private strays = 0;
 
@@ -72,10 +94,13 @@ export class ShuttleEstimator {
    */
   constructor(
     private toFloor: (x: number, y: number) => { u: number; v: number; air?: boolean },
-    private hitterAt?: (hit: { t: number; x: number; y: number }) => Floor | null | undefined,
+    private hitterAt?: (hit: { t: number; x: number; y: number }) => Hitter | null | undefined,
+    /** How the player on `track` held the racket around the time `t`, from their body pose. */
+    private poseOf?: (track: number, t: number) => HitPose | null,
   ) {}
 
   newRally() {
+    this.finishAtLanding();
     this.shots = 0;
     this.peakKmh = 0;
     this.lastShotKmh = 0;
@@ -157,7 +182,7 @@ export class ShuttleEstimator {
     if (!air) this.lastFloor = { t: s.t, u, v };
   }
 
-  private count(t: number, u: number, v: number, air: boolean, at: { x: number; y: number }, hitter?: Floor | null) {
+  private count(t: number, u: number, v: number, air: boolean, at: { x: number; y: number }, hitter?: Hitter | null) {
     this.shots += 1;
     this.lastHitT = t;
     this.hit = { t, u, v, ...(air ? { air } : {}) };
@@ -166,14 +191,42 @@ export class ShuttleEstimator {
   }
 
   /** The shot that ended with this hit: from the previous hitter's spot to this one, in the time between. */
-  private measureShot(t: number, floor: Floor | null | undefined) {
+  private measureShot(t: number, floor: Hitter | null | undefined) {
     const prev = this.prevShot;
     if (prev) {
       const r = floor && this.samplesSinceHit >= MIN_SAMPLES_PER_SHOT ? shotSpeed(prev.floor, floor, t - prev.t) : null;
       this.lastShotKmh = r ? r.kmh : 0; // no believable number: show none rather than the shot before
+      this.finishShot(prev, floor ?? null, t - prev.t);
     }
-    this.prevShot = floor ? { t, floor } : null;
+    this.prevShot = floor ? { t, floor: { u: floor.u, v: floor.v }, track: floor.track, number: this.shots } : null;
     this.samplesSinceHit = 0;
+  }
+
+  /** Names the shot that began at `prev`: it went to `to` (the next hitter's spot, or where it came down) in `seconds`. */
+  private finishShot(prev: { t: number; floor: Floor; track?: number; number: number }, to: Floor | null, seconds: number | null) {
+    const pose = prev.track != null ? this.poseOf?.(prev.track, prev.t) ?? null : null;
+    const r = classifyShot({ number: prev.number, from: prev.floor, to, seconds, height: pose?.height });
+    this.shotLog.push({
+      ...r, number: prev.number, t: prev.t, track: prev.track, from: prev.floor, to,
+      ...(pose ? { height: pose.height, pose: packPose(pose.pose) } : {}),
+    });
+  }
+
+  /** The last shot of a rally has no next hit: it ends where the shuttle came down. */
+  private finishAtLanding() {
+    const prev = this.prevShot;
+    const down = this.lastFloor;
+    if (prev && down && this.lastVel && this.lastVel.y > 0 && down.t - prev.t > 0.15) {
+      this.finishShot(prev, { u: down.u, v: down.v }, down.t - prev.t);
+    }
+    this.prevShot = null;
+  }
+
+  /** The shots named since this was last called, oldest first. */
+  takeShots(): ShotEvent[] {
+    const out = this.shotLog.slice(this.shotsTaken);
+    this.shotsTaken = this.shotLog.length;
+    return out;
   }
 
   /** What happened so far in this rally, for deciding who won it (see rallyEnd.ts). */
