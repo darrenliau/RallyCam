@@ -13,6 +13,26 @@ struct ContentView: View {
   }
 }
 
+/// The score, with who serves (and from which court) between the two sides. On both pages, so it is next to the buttons that change it.
+struct ScoreRow: View {
+  let s: RallyState
+
+  var body: some View {
+    HStack {
+      Text("\(s.a ?? 0)").font(.title2.bold())
+      Spacer()
+      Text(serving).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+      Spacer()
+      Text("\(s.b ?? 0)").font(.title2.bold())
+    }
+  }
+
+  private var serving: String {
+    guard let side = s.serving else { return "" }
+    return "\(side == "A" ? "◀" : "▶") \(s.server ?? "")\n\(s.court ?? "")"
+  }
+}
+
 /// What the camera sees, with a recording dot and clock over it, and the score under it.
 struct PreviewPage: View {
   @ObservedObject var link: PhoneLink
@@ -38,13 +58,7 @@ struct PreviewPage: View {
       } else if s.isTraining {
         Text("Training").font(.headline)
       } else {
-        HStack {
-          Text("\(s.a ?? 0)").font(.title2.bold())
-          Spacer()
-          Text(servingText(s)).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
-          Spacer()
-          Text("\(s.b ?? 0)").font(.title2.bold())
-        }
+        ScoreRow(s: s)
       }
       Text(statusText(s)).font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
     }
@@ -73,13 +87,6 @@ struct PreviewPage: View {
       }
       .clipShape(RoundedRectangle(cornerRadius: 8))
     }
-  }
-
-  private func servingText(_ s: RallyState) -> String {
-    guard let serving = s.serving else { return "" }
-    let who = s.server ?? ""
-    let court = s.court ?? ""
-    return "\(serving == "A" ? "◀" : "▶") \(who)\n\(court)"
   }
 
   private func statusText(_ s: RallyState) -> String {
@@ -145,6 +152,7 @@ struct ControlsPage: View {
   private func recordingButtons(_ s: RallyState) -> some View {
     let playing = s.isRecording && !s.isOver && !s.isTraining
     if !s.isTraining {
+      ScoreRow(s: s)
       Button { link.send("point", side: "A") } label: { Text("+ \(s.nameA ?? "Near side")").frame(maxWidth: .infinity) }
         .tint(.green)
         .disabled(!playing)

@@ -355,3 +355,5 @@ What iOS allows: a watch cannot wake the phone or bring RallyCam to the front, a
 - **The phone stays awake while the watch app is open** (`WatchLink` holds a keep-awake while the watch is reachable), so it does not lock between games; a locked phone still cannot be reached and the watch says so.
 - The state for the watch is now sent whether or not the preview switch is on (the switch only controls the picture), so the score and buttons keep working with the picture off.
 Not tried on a phone and watch yet.
+
+Watch: the score is now on the controls page too. A shared `ScoreRow` (the two scores with who serves and from which court between them) is at the top of the buttons page while a game is being scored, so the score is in view while points are added, undone or swapped; the picture page still shows it under the picture.
