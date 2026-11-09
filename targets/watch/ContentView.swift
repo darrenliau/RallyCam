@@ -33,7 +33,9 @@ struct PreviewPage: View {
           .padding(3)
         }
       }
-      if s.isTraining {
+      if s.isIdle {
+        Text(s.lastNames ?? "No game running").font(.caption).multilineTextAlignment(.center)
+      } else if s.isTraining {
         Text("Training").font(.headline)
       } else {
         HStack {
@@ -63,7 +65,7 @@ struct PreviewPage: View {
           Rectangle().fill(Color.gray.opacity(0.25)).aspectRatio(16.0 / 9.0, contentMode: .fit)
         }
         if !fresh {
-          Text(link.reachable ? "Waiting for the picture" : "Open RallyCam on the phone")
+          Text(link.reachable ? (link.state?.isIdle == true ? "No game running" : "Waiting for the picture") : "Open RallyCam on the phone")
             .font(.caption2)
             .multilineTextAlignment(.center)
             .padding(4)
@@ -83,38 +85,34 @@ struct PreviewPage: View {
   private func statusText(_ s: RallyState) -> String {
     if let over = s.over { return over == "A" ? "Game over: \(s.nameA ?? "near side") won" : "Game over: \(s.nameB ?? "far side") won" }
     if link.state == nil { return "" }
-    if s.locked == false { return "Lock the court on the phone" }
+    if s.isIdle { return "Start one from the next page" }
+    if s.locked == false { return "Frame the court, then lock and start" }
     if let free = s.freeMb, free < 2000 { return "Low storage: \(free / 1000) GB free" }
     return ""
   }
 }
 
-/// Add a point for either side, undo, swap the last automatic point, end the game (with a question first).
+/// What the buttons can do depends on where the phone is: no game running (start one), setting up the court (lock it and start), or
+/// recording (add a point for either side, undo, swap the last automatic point, end the game with a question first).
 struct ControlsPage: View {
   @ObservedObject var link: PhoneLink
   @State private var confirmEnd = false
 
   var body: some View {
     let s = link.state ?? RallyState()
-    let playing = s.isRecording && !s.isOver && !s.isTraining
     ScrollView {
       VStack(spacing: 6) {
-        if !s.isTraining {
-          Button { link.send("point", side: "A") } label: { Text("+ \(s.nameA ?? "Near side")").frame(maxWidth: .infinity) }
+        if link.state == nil {
+          Text("Open RallyCam on the phone").font(.footnote).multilineTextAlignment(.center)
+        } else if s.isIdle {
+          idleButtons(s)
+        } else if s.locked == false && !s.isRecording {
+          Button { link.send("lock") } label: { Text("Lock court and start").frame(maxWidth: .infinity) }
             .tint(.green)
-            .disabled(!playing)
-          Button { link.send("point", side: "B") } label: { Text("+ \(s.nameB ?? "Far side")").frame(maxWidth: .infinity) }
-            .tint(.blue)
-            .disabled(!playing)
-          HStack(spacing: 6) {
-            Button("Undo") { link.send("undo") }
-              .disabled((s.points ?? 0) == 0)
-            Button("Swap") { link.send("swap") }
-              .disabled(s.last != "auto")
-          }
+          Text("Check the picture first. The court lines are set on the phone.").font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+        } else {
+          recordingButtons(s)
         }
-        Button(role: .destructive) { confirmEnd = true } label: { Text(s.isTraining ? "End session" : "End game").frame(maxWidth: .infinity) }
-          .disabled(!s.isRecording && (s.points ?? 0) == 0)
         if let note = link.note {
           Text(note).font(.caption2).foregroundStyle(.orange)
         }
@@ -125,5 +123,42 @@ struct ControlsPage: View {
       Button(s.isTraining ? "End session" : "End game", role: .destructive) { link.send("end") }
       Button("Keep recording", role: .cancel) {}
     }
+  }
+
+  /// No game is running: start one like the last, or say there is no last one.
+  @ViewBuilder
+  private func idleButtons(_ s: RallyState) -> some View {
+    if s.hasLast == true {
+      Button { link.send("startGame") } label: { Text("Start game").frame(maxWidth: .infinity) }
+        .tint(.green)
+      Button { link.send("startTraining") } label: { Text("Start training").frame(maxWidth: .infinity) }
+        .tint(.blue)
+      Text("\(s.lastNames ?? "")\(s.lastVenue.map { " at \($0)" } ?? "")")
+        .font(.caption2).foregroundStyle(.secondary).multilineTextAlignment(.center)
+    } else {
+      Text("Start one game on the phone first, then the watch can start the next.").font(.footnote).multilineTextAlignment(.center)
+    }
+  }
+
+  /// A court is locked: score buttons, undo, swap, end.
+  @ViewBuilder
+  private func recordingButtons(_ s: RallyState) -> some View {
+    let playing = s.isRecording && !s.isOver && !s.isTraining
+    if !s.isTraining {
+      Button { link.send("point", side: "A") } label: { Text("+ \(s.nameA ?? "Near side")").frame(maxWidth: .infinity) }
+        .tint(.green)
+        .disabled(!playing)
+      Button { link.send("point", side: "B") } label: { Text("+ \(s.nameB ?? "Far side")").frame(maxWidth: .infinity) }
+        .tint(.blue)
+        .disabled(!playing)
+      HStack(spacing: 6) {
+        Button("Undo") { link.send("undo") }
+          .disabled((s.points ?? 0) == 0)
+        Button("Swap") { link.send("swap") }
+          .disabled(s.last != "auto")
+      }
+    }
+    Button(role: .destructive) { confirmEnd = true } label: { Text(s.isTraining ? "End session" : "End game").frame(maxWidth: .infinity) }
+      .disabled(!s.isRecording && (s.points ?? 0) == 0)
   }
 }

@@ -1,8 +1,11 @@
 import { currentGame, serverName, sideLabel } from './engine/scoring';
 import type { MatchState, Side } from './engine/types';
+import { describeLastGame, type LastGame } from './lastGame';
 
 /** What the watch app is told about the game, a few times a second. Short names keep it small; the watch reads the same keys (targets/watch/RallyState.swift). */
 export interface WatchState {
+  /** The Record screen is open (this is the state of its game). */
+  screen: 'record';
   /** Recording now. */
   rec: boolean;
   /** Seconds recorded. */
@@ -45,6 +48,7 @@ export function buildWatchState(input: {
   const game = currentGame(state);
   const last = state.rallies[state.rallies.length - 1];
   const out: WatchState = {
+    screen: 'record',
     rec: input.recording,
     secs: Math.max(0, Math.floor(input.elapsedMs / 1000)),
     a: game.A,
@@ -65,9 +69,27 @@ export function buildWatchState(input: {
   return JSON.stringify(out);
 }
 
-export type WatchCommand = { kind: 'point'; side: Side } | { kind: 'undo' } | { kind: 'swap' } | { kind: 'end' };
+/** What the watch is told while the Record screen is not open: that there is no game running, and what a new one would be. */
+export function buildIdleWatchState(last: LastGame | undefined): string {
+  return JSON.stringify({
+    screen: 'idle',
+    hasLast: !!last,
+    ...(last ? { lastNames: describeLastGame(last), ...(last.venueName ? { lastVenue: last.venueName } : {}) } : {}),
+  });
+}
 
-/** Reads a message from the watch. Anything that is not one of the four commands is ignored. */
+export type WatchCommand =
+  | { kind: 'point'; side: Side }
+  | { kind: 'undo' }
+  | { kind: 'swap' }
+  | { kind: 'end' }
+  /** Lock the court and start recording (the Record screen is open and the court is not locked yet). */
+  | { kind: 'lock' }
+  /** Start a new game, or training, with the setup of the last one (the Record screen is not open). */
+  | { kind: 'startGame' }
+  | { kind: 'startTraining' };
+
+/** Reads a message from the watch. Anything that is not one of the commands is ignored. */
 export function parseWatchCommand(message: { command?: string; side?: string }): WatchCommand | null {
   switch (message.command) {
     case 'point':
@@ -78,6 +100,12 @@ export function parseWatchCommand(message: { command?: string; side?: string }):
       return { kind: 'swap' };
     case 'end':
       return { kind: 'end' };
+    case 'lock':
+      return { kind: 'lock' };
+    case 'startGame':
+      return { kind: 'startGame' };
+    case 'startTraining':
+      return { kind: 'startTraining' };
     default:
       return null;
   }
@@ -89,10 +117,15 @@ export function parseWatchCommand(message: { command?: string; side?: string }):
  */
 export function watchCommandAllowed(
   cmd: WatchCommand,
-  now: { recording: boolean; over: boolean; training: boolean; ending: boolean; rallies: number; lastSource?: 'auto' | 'manual' },
+  now: { recording: boolean; over: boolean; training: boolean; ending: boolean; rallies: number; lastSource?: 'auto' | 'manual'; /** the court has not been locked yet */ aligning?: boolean; /** the court is being tapped or a lens is switching */ busy?: boolean },
 ): boolean {
   if (now.ending) return false;
   switch (cmd.kind) {
+    case 'lock':
+      return !!now.aligning && !now.recording && !now.busy;
+    case 'startGame':
+    case 'startTraining':
+      return false; // those are for when the Record screen is not open: see watchStartAllowed
     case 'point':
       return now.recording && !now.over && !now.training;
     case 'undo':
@@ -102,4 +135,9 @@ export function watchCommandAllowed(
     case 'end':
       return now.recording || now.rallies > 0;
   }
+}
+
+/** Starting a game from the watch: only when the Record screen is not open (it is already running one), and a last game exists to copy. */
+export function watchStartAllowed(now: { onRecord: boolean; hasLast: boolean }): boolean {
+  return !now.onRecord && now.hasLast;
 }

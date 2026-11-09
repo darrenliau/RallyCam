@@ -821,8 +821,11 @@ export default function Record() {
 
   // --- The Apple Watch: it shows what the camera sees and the score, and its buttons come back here ---
   // The latest versions of the actions, for the listener below, which is set up once
-  const watchActions = useRef({ point: (_side: Side) => {}, undo: () => {}, swap: () => {}, end: () => {} });
-  watchActions.current = { point: onPoint, undo: onUndo, swap: swapLastPoint, end: () => { endMatch(); } };
+  const watchActions = useRef({ point: (_side: Side) => {}, undo: () => {}, swap: () => {}, end: () => {}, lock: () => {} });
+  watchActions.current = { point: onPoint, undo: onUndo, swap: swapLastPoint, end: () => { endMatch(); }, lock: lockCourt };
+  // whether the court is still being set up (not locked, not being tapped, no lens switching), for the lock command
+  const watchCtx = useRef({ aligning: true, busy: false });
+  watchCtx.current = { aligning, busy: !!tapPoints || lensBusy || courtFinder === 'finding' };
   useEffect(() => {
     if (!Capture || !usesNativeCapture) return;
     const sub = Capture.addListener('onWatchCommand', (e) => {
@@ -837,22 +840,28 @@ export default function Record() {
         ending: endingRef.current,
         rallies: st.rallies.length,
         lastSource: last?.source,
+        aligning: watchCtx.current.aligning,
+        busy: watchCtx.current.busy,
       });
       if (!allowed) return;
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      if (cmd.kind === 'point') watchActions.current.point(cmd.side);
-      else if (cmd.kind === 'undo') watchActions.current.undo();
-      else if (cmd.kind === 'swap') watchActions.current.swap();
-      else watchActions.current.end();
+      switch (cmd.kind) {
+        case 'point': watchActions.current.point(cmd.side); break;
+        case 'undo': watchActions.current.undo(); break;
+        case 'swap': watchActions.current.swap(); break;
+        case 'end': watchActions.current.end(); break;
+        case 'lock': watchActions.current.lock(); break;
+        default: break; // starting a game is for the rest of the app (src/components/WatchLink.tsx)
+      }
     });
     return () => sub.remove();
   }, []);
   // Tell the watch how the game stands: when anything it shows changes, and as the clock ticks
   useEffect(() => {
-    if (!Capture || !usesNativeCapture || !settings.watchPreview) return;
+    if (!Capture || !usesNativeCapture) return;
     Capture.sendWatchState(buildWatchState({ state, recording, elapsedMs: elapsed, fps, freeBytes: freeSpaceBytes(), locked: !aligning, training }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [state, recording, Math.floor(elapsed / 1000), fps, aligning, training, settings.watchPreview]);
+  }, [state, recording, Math.floor(elapsed / 1000), fps, aligning, training]);
   // The picture for the watch, while this screen is open (so the framing can be checked before the court is locked too)
   useEffect(() => {
     const native = Capture;

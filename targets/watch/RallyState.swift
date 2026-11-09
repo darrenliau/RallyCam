@@ -3,6 +3,10 @@ import Foundation
 /// What the phone tells the watch about the game (src/watchBridge.ts makes it). Every field is optional so that a phone app that is
 /// newer or older than the watch app never stops it from reading what it can.
 struct RallyState: Codable, Equatable {
+  var screen: String?     // "record" while the phone is on its Record screen, "idle" when no game is running
+  var hasLast: Bool?      // idle: there is a last game that a new one can copy
+  var lastNames: String?  // idle: "You & Mia vs Sam & Jun"
+  var lastVenue: String?  // idle: where it was
   var rec: Bool?          // recording now
   var secs: Int?          // seconds recorded
   var a: Int?             // score of the side nearest the camera
@@ -25,6 +29,7 @@ extension RallyState {
   var isRecording: Bool { rec ?? false }
   var isTraining: Bool { training ?? false }
   var isOver: Bool { over != nil }
+  var isIdle: Bool { screen == "idle" }
 
   /// "3:07" or "1:02:09"
   var clock: String {

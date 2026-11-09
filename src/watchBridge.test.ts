@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { addRally, newMatch } from './engine/scoring';
 import type { MatchConfig } from './engine/types';
-import { buildWatchState, parseWatchCommand, watchCommandAllowed, type WatchState } from './watchBridge';
+import { buildIdleWatchState, buildWatchState, parseWatchCommand, watchCommandAllowed, watchStartAllowed, type WatchState } from './watchBridge';
 
 const config: MatchConfig = { type: 'doubles', bestOf: 1, firstServer: 'A', players: { A: ['You', 'Mia'], B: ['Sam', 'Jun'] } };
 const read = (json: string) => JSON.parse(json) as WatchState;
@@ -36,6 +36,9 @@ describe('parseWatchCommand', () => {
     expect(parseWatchCommand({ command: 'undo' })).toEqual({ kind: 'undo' });
     expect(parseWatchCommand({ command: 'swap' })).toEqual({ kind: 'swap' });
     expect(parseWatchCommand({ command: 'end' })).toEqual({ kind: 'end' });
+    expect(parseWatchCommand({ command: 'lock' })).toEqual({ kind: 'lock' });
+    expect(parseWatchCommand({ command: 'startGame' })).toEqual({ kind: 'startGame' });
+    expect(parseWatchCommand({ command: 'startTraining' })).toEqual({ kind: 'startTraining' });
   });
   it('ignores anything else, including a point with no side', () => {
     expect(parseWatchCommand({ command: 'point' })).toBeNull();
@@ -70,5 +73,33 @@ describe('watchCommandAllowed', () => {
   });
   it('lets training end', () => {
     expect(watchCommandAllowed({ kind: 'end' }, { ...base, training: true, rallies: 0 })).toBe(true);
+  });
+});
+
+describe('starting from the watch', () => {
+  const aligning = { recording: false, over: false, training: false, ending: false, rallies: 0, aligning: true, busy: false };
+  it('lock needs a court that is not locked yet, nothing recording, and nothing busy', () => {
+    expect(watchCommandAllowed({ kind: 'lock' }, aligning)).toBe(true);
+    expect(watchCommandAllowed({ kind: 'lock' }, { ...aligning, aligning: false })).toBe(false);
+    expect(watchCommandAllowed({ kind: 'lock' }, { ...aligning, recording: true })).toBe(false);
+    expect(watchCommandAllowed({ kind: 'lock' }, { ...aligning, busy: true })).toBe(false);
+    expect(watchCommandAllowed({ kind: 'lock' }, { ...aligning, ending: true })).toBe(false);
+  });
+  it('starting a game is not for the Record screen, which is already running one', () => {
+    expect(watchCommandAllowed({ kind: 'startGame' }, aligning)).toBe(false);
+    expect(watchCommandAllowed({ kind: 'startTraining' }, aligning)).toBe(false);
+  });
+  it('a game starts only away from the Record screen and when there is a last game to copy', () => {
+    expect(watchStartAllowed({ onRecord: false, hasLast: true })).toBe(true);
+    expect(watchStartAllowed({ onRecord: true, hasLast: true })).toBe(false);
+    expect(watchStartAllowed({ onRecord: false, hasLast: false })).toBe(false);
+  });
+  it('the state for the watch away from Record says what a new game would be', () => {
+    const idle = JSON.parse(buildIdleWatchState({ type: 'doubles', players: { A: ['You', 'Mia'], B: ['Sam', 'Jun'] }, venueName: 'Tuesday hall' }));
+    expect(idle).toEqual({ screen: 'idle', hasLast: true, lastNames: 'You & Mia vs Sam & Jun', lastVenue: 'Tuesday hall' });
+    expect(JSON.parse(buildIdleWatchState(undefined))).toEqual({ screen: 'idle', hasLast: false });
+  });
+  it('the state of a game says it is the Record screen', () => {
+    expect(JSON.parse(buildWatchState({ state: newMatch(config), recording: false, elapsedMs: 0, locked: false, training: false })).screen).toBe('record');
   });
 });

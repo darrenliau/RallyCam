@@ -23,6 +23,8 @@ describe('parseSetting', () => {
     expect(parseSetting('cropModel', '0')).toBe(false);
     expect(parseSetting('courtOnly', '1')).toBe(true);
     expect(parseSetting('watchPreview', '0')).toBe(false);
+    expect(parseSetting('lastGame', JSON.stringify({ type: 'singles', players: { A: ['You'], B: ['Sam'] } }))).toContain('singles');
+    expect(parseSetting('lastGame', 'garbage')).toBeUndefined();
     expect(parseSetting('keepAnalysisCopy', '1')).toBe(true);
     expect(parseSetting('keepAnalysisCopy', 'x')).toBeUndefined();
     expect(parseSetting('lens', 'ultra-wide')).toBe('ultra-wide');

@@ -4,6 +4,7 @@ import { useEffect } from 'react';
 import { recoverUnfinishedGames } from '../db/matches';
 import { fileBytes } from '../export/storage';
 import { StatusBar } from 'expo-status-bar';
+import { WatchLink } from '../components/WatchLink';
 import { colors } from '../theme';
 
 export default function RootLayout() {
@@ -13,6 +14,7 @@ export default function RootLayout() {
   return (
     <>
       <StatusBar style="light" />
+      <WatchLink />
       <Stack screenOptions={{ headerShown: false, contentStyle: { backgroundColor: colors.bg } }}>
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="record" options={{ gestureEnabled: false, animation: 'fade' }} />

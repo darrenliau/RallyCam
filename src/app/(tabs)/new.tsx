@@ -6,6 +6,7 @@ import { createVenue, deleteVenue, listVenues, renameVenue, touchVenue, type Ven
 import { usesNativeCapture } from '../../camera/RecorderView';
 import type { MatchConfig, MatchType } from '../../engine/types';
 import { Button, Card, Label } from '../../components/ui';
+import { rememberLastGame } from '../../components/WatchLink';
 import { colors, radius } from '../../theme';
 
 function Segmented<T extends string | number>({ options, value, onChange }: { options: { label: string; value: T }[]; value: T; onChange: (v: T) => void }) {
@@ -93,6 +94,8 @@ export default function NewMatch() {
       ...(training ? { training: true } : {}),
       players: { A: clean(a, ['You', 'Mia']), B: clean(b, ['Sam', 'Jun']) },
     };
+    // so the watch can start another game like this one
+    rememberLastGame({ type, players: config.players, ...(venueId ? { venueId } : {}), ...(venue ? { venueName: venue.name } : {}) });
     router.push({ pathname: '/record', params: { config: JSON.stringify(config), ...(venueId ? { venueId } : {}), ...(footage ? { capture: '1' } : {}) } });
   };
   const set = (arr: string[], fn: (x: string[]) => void, i: number) => (v: string) => fn(arr.map((x, j) => (j === i ? v : x)));
