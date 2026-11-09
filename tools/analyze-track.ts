@@ -3,7 +3,7 @@
  * the sighting filter, the shuttle estimator, the court map, and the rally-end and winner rules. It prints each rally it finds.
  * No court is needed: the recording stands in for the game.
  *
- *   npx tsx tools/analyze-track.ts new_coreml_ball.csv --corners corners.json [--singles] [--first-server A|B] [--out rallies.json]
+ *   npx tsx tools/analyze-track.ts new_coreml_ball.csv --corners corners.json [--singles] [--gate] [--first-server A|B] [--out rallies.json]
  *
  * `corners.json` is the four outer corners of the doubles court in the video, as fractions of the frame (0 to 1, from the top left):
  *   { "farLeft": {"x":.., "y":..}, "farRight": {..}, "nearRight": {..}, "nearLeft": {..} }
@@ -16,6 +16,7 @@
  */
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { courtMap, floorPosition, type Corners } from '../src/analysis/court';
+import { courtRegion } from '../src/analysis/courtRegion';
 import { ModelTrackFilter, type ModelFrame } from '../src/analysis/modelTrack';
 import { isRallyOver, judgeRally, landingCall } from '../src/analysis/rallyEnd';
 import { parseTracknetCsv } from '../src/analysis/tracknetCsv';
@@ -45,6 +46,8 @@ const raw = parseTracknetCsv(readFileSync(csvFile, 'utf8'), fps, meta.frames);
 const frames: ModelFrame[] = raw.map((r) => (r.track ? { t: r.t, x: r.track.x / width, y: r.track.y / height } : { t: r.t }));
 
 const filter = new ModelTrackFilter();
+// --gate: only sightings over the court count, as in the app with "Only this court" on
+if (args.includes('--gate')) filter.setRegion(courtRegion(corners));
 const estimator = new ShuttleEstimator(toFloor);
 const SEQ = 8;
 let server: 'A' | 'B' = (flag('--first-server') ?? 'A') === 'B' ? 'B' : 'A';
