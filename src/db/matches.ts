@@ -1,6 +1,7 @@
 import type { OverlayData } from '../analysis/overlay';
 import { replay } from '../engine/scoring';
 import type { MatchConfig, MatchState, Rally, Side } from '../engine/types';
+import { resolveStoredUri } from '../export/storage';
 import { getDb } from './db';
 import { inOrder } from './inOrder';
 import { planRecovery, type UnfinishedGame } from './recovery';
@@ -66,8 +67,8 @@ function toRecord(m: MatchRow, rallies: RallyRow[]): MatchRecord {
   return {
     id: m.id,
     createdAt: m.created_at,
-    videoUri: m.video_uri,
-    overlayVideoUri: m.overlay_video_uri,
+    videoUri: resolveStoredUri(m.video_uri),
+    overlayVideoUri: resolveStoredUri(m.overlay_video_uri),
     durationMs: m.duration_ms,
     status: m.status,
     venueName: m.venue_name,
@@ -126,6 +127,7 @@ export async function setProvisionalVideo(matchId: string, uri: string, overlayB
  * `sizeOf` says how big a video file is now (0 when it is gone).
  */
 export async function recoverUnfinishedGames(sizeOf: (uri: string | null) => number): Promise<number> {
+  await repairVideoLinks().catch(() => 0);
   const db = await getDb();
   const rows = await db.getAllAsync<{ id: string; video_uri: string | null; overlay_video_uri: string | null; n: number; last_end: number | null }>(
     `SELECT m.id AS id, m.video_uri AS video_uri, m.overlay_video_uri AS overlay_video_uri,
@@ -147,6 +149,28 @@ export async function recoverUnfinishedGames(sizeOf: (uri: string | null) => num
     }
   }
   return plan.filter((p) => p.action === 'finish').length;
+}
+
+/**
+ * Run when the app starts, before anything looks at the videos. A video's stored address can be wrong after an update (see
+ * resolveStoredUri) while the file is fine: point such games at the file's current address, so the games keep their videos.
+ * Returns how many games were put right.
+ */
+export async function repairVideoLinks(): Promise<number> {
+  const db = await getDb();
+  const rows = await db.getAllAsync<{ id: string; video_uri: string | null; overlay_video_uri: string | null }>(
+    'SELECT id, video_uri, overlay_video_uri FROM matches WHERE video_uri IS NOT NULL OR overlay_video_uri IS NOT NULL',
+  );
+  let fixed = 0;
+  for (const r of rows) {
+    const v = resolveStoredUri(r.video_uri);
+    const o = resolveStoredUri(r.overlay_video_uri);
+    if (v !== r.video_uri || o !== r.overlay_video_uri) {
+      await db.runAsync('UPDATE matches SET video_uri = ?, overlay_video_uri = ? WHERE id = ?', v, o, r.id);
+      fixed += 1;
+    }
+  }
+  return fixed;
 }
 
 /** Forgets the video files of a game, for when they have been deleted to free space. The score and stats stay. */

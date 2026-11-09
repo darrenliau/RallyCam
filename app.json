@@ -11,7 +11,9 @@
       "bundleIdentifier": "com.darrenliau.rallycam",
       "appleTeamId": "7L6MN59QB8",
       "infoPlist": {
-        "ITSAppUsesNonExemptEncryption": false
+        "ITSAppUsesNonExemptEncryption": false,
+        "UIFileSharingEnabled": true,
+        "LSSupportsOpeningDocumentsInPlace": true
       },
       "privacyManifests": {
         "NSPrivacyAccessedAPITypes": [

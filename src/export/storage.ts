@@ -1,4 +1,5 @@
 import { Directory, File, Paths } from 'expo-file-system';
+import { rebaseToFolder } from './paths';
 
 /** Bit rate of the clean analysis copy (see CaptureController.analysisBitRate), to say how much space it takes. */
 export const ANALYSIS_MB_PER_MINUTE = (5_000_000 / 8) * 60 / 1e6;
@@ -31,6 +32,24 @@ export const formatBytes = (n: number): string =>
 /** Free space on the phone, in bytes. */
 export function freeSpaceBytes(): number {
   try { return Paths.availableDiskSpace; } catch { return Number.POSITIVE_INFINITY; }
+}
+
+/**
+ * The address a saved video has now. The address stored with a game can be out of date after an app update (iOS may give the app a
+ * different data folder), although the file is still in the games folder under its own name, so look there when the stored address
+ * has no file. Returns the stored address when the file cannot be found at all.
+ */
+export function resolveStoredUri(uri: string | null | undefined): string | null {
+  if (!uri) return null;
+  try {
+    if (new File(uri).exists) return uri;
+    const dir = new Directory(Paths.document, 'games');
+    const moved = rebaseToFolder(uri, dir.uri);
+    if (moved && new File(moved).exists) return moved;
+  } catch {
+    // fall through to the stored address
+  }
+  return uri;
 }
 
 /** Size of one file in bytes, or 0 if it is gone. */
