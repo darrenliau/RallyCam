@@ -104,6 +104,17 @@ export default function Settings() {
               <Switch value={settings.shuttleModel} onValueChange={(v) => updateSettings({ shuttleModel: v })} accessibilityLabel="Shuttle model" />
             </View>
           )}
+          {EXPERIMENTS && (
+            <View style={s.row}>
+              <View style={{ flex: 1 }}>
+                <Label>Follow camera moves · experimental</Label>
+                <Text style={s.muted}>
+                  While recording, checks every few seconds whether the phone or tripod has moved. A small steady move moves the court with it; a big one shows a warning to set the court again. Turn it off if the court ever jumps for no reason.
+                </Text>
+              </View>
+              <Switch value={settings.courtFollow} onValueChange={(v) => updateSettings({ courtFollow: v })} accessibilityLabel="Follow camera moves" />
+            </View>
+          )}
           {EXPERIMENTS && settings.shuttleModel && (
             <View style={s.row}>
               <View style={{ flex: 1 }}>

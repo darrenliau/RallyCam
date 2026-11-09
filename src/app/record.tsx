@@ -25,6 +25,8 @@ import { createMatch, finishMatch, saveOverlay, saveRallies, setOverlayVideo, se
 import { EXPERIMENTS, HIDE_EMPTY_SHUTTLE } from '../config';
 import { buildLiveScene } from '../export/ass';
 import { canExportOnDevice } from '../export/nativeExport';
+import { reference, shiftFrom, type Reference } from '../analysis/cameraShift';
+import { followCorners, judgeShift } from '../analysis/courtFollow';
 import { buildWatchState, parseWatchCommand, watchCommandAllowed } from '../watchBridge';
 import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, shuttleLogUriFor } from '../export/storage';
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, nextLensName, updateSettings, useSettings } from '../settings';
@@ -819,6 +821,54 @@ export default function Record() {
     persist(editRally(state, i, { winner: last.winner === 'A' ? 'B' : 'A', source: 'manual' }));
   };
 
+  // --- The camera moved? Once recording, the picture is compared with the one at the moment the court was locked. A small steady move
+  // moves the court with it; a big one is a warning to set the court again. ---
+  const [courtNote, setCourtNote] = useState<{ text: string; warn: boolean } | null>(null);
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !usesNativeCapture || footage || aligning || !recording) return;
+    let alive = true;
+    let ref: Reference | null = null;
+    let before: { dx: number; dy: number } | null = null;
+    let following = false;
+    const locked = cornersRef.current;           // where the court was locked: every shift is measured from here
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const look = async () => {
+      try {
+        const still = await native.grabStill(640);
+        if (!alive) return;
+        const img = { data: decodeBase64(still.data), width: still.width, height: still.height };
+        if (!ref) { ref = reference(img); return; }
+        const s = shiftFrom(ref, img);
+        const call = judgeShift(s, before);
+        before = { dx: s.dx, dy: s.dy };
+        if (call.kind === 'in-place') {
+          if (following) { following = false; setDragged(locked); }
+          setCourtNote(null);
+        } else if (call.kind === 'follow' && settings.courtFollow) {
+          following = true;
+          setDragged(followCorners(locked, { dx: call.dx, dy: call.dy }, { frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height }));
+          setCourtNote({ text: `The camera moved a little (${(Math.hypot(call.dx, call.dy) * 100).toFixed(1)}%), so the court moved with it.`, warn: false });
+        } else if (call.kind === 'lost' || (call.kind === 'follow' && !settings.courtFollow)) {
+          setCourtNote({ text: 'The phone or tripod has moved. Tap Re-align court to set the court again.', warn: true });
+        }
+      } catch {
+        // a picture that could not be had is not a reason to say anything
+      } finally {
+        if (alive) timer = setTimeout(look, 8000);
+      }
+    };
+    timer = setTimeout(look, 1500);
+    return () => { alive = false; if (timer) clearTimeout(timer); setCourtNote(null); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [recording, aligning, footage, settings.courtFollow]);
+  // a note that the court followed a small move goes away by itself
+  useEffect(() => {
+    if (!courtNote || courtNote.warn) return;
+    const id = setTimeout(() => setCourtNote(null), 6000);
+    return () => clearTimeout(id);
+  }, [courtNote]);
+
   // --- The Apple Watch: it shows what the camera sees and the score, and its buttons come back here ---
   // The latest versions of the actions, for the listener below, which is set up once
   const watchActions = useRef({ point: (_side: Side) => {}, undo: () => {}, swap: () => {}, end: () => {}, lock: () => {} });
@@ -958,6 +1008,10 @@ export default function Record() {
         {footage && <View style={s.chip}><Text style={[s.chipText, { color: colors.accent }]}>Footage capture · no overlay</Text></View>}
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
       </View>
+
+      {courtNote && !aligning && (
+        <Text style={[s.err, { top: T + 60, left: (width - 380) / 2, width: 380, backgroundColor: courtNote.warn ? 'rgba(160,110,20,0.95)' : 'rgba(20,90,60,0.92)' }]}>{courtNote.text}</Text>
+      )}
 
       {pausedBecause && (
         <Text style={[s.err, { top: T + 96, left: (width - 360) / 2, width: 360, backgroundColor: 'rgba(160,110,20,0.95)' }]}>

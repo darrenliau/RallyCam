@@ -50,6 +50,8 @@ export interface Settings {
   cropModel: boolean;
   /** Follow the shuttle only over the aligned court, not on the courts beside it. */
   courtOnly: boolean;
+  /** While recording, notice that the phone or tripod has moved and move the court with a small move (warn about a big one). */
+  courtFollow: boolean;
   /** The setup of the last game started (JSON text, see lastGame.ts), so the watch can start another one. Empty until one has been. */
   lastGame: string;
   /** Send the Apple Watch app a small live picture of the camera while the Record screen is open. */
@@ -60,12 +62,12 @@ export interface Settings {
   lens: Lens;
 }
 
-export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, shuttleModel: false, cropModel: true, courtOnly: true, watchPreview: true, lastGame: '', keepAnalysisCopy: false, lens: 'auto' };
+export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, shuttleModel: false, cropModel: true, courtOnly: true, watchPreview: true, courtFollow: true, lastGame: '', keepAnalysisCopy: false, lens: 'auto' };
 
 /** Reads one stored value back into the right type, ignoring anything unexpected. */
 export function parseSetting<K extends keyof Settings>(key: K, raw: string): Settings[K] | undefined {
   if (key === 'quality') return (raw in QUALITY ? raw : undefined) as Settings[K] | undefined;
-  if (key === 'guideSeen' || key === 'experimentalShuttle' || key === 'shuttleModel' || key === 'cropModel' || key === 'courtOnly' || key === 'watchPreview' || key === 'keepAnalysisCopy') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
+  if (key === 'guideSeen' || key === 'experimentalShuttle' || key === 'shuttleModel' || key === 'cropModel' || key === 'courtOnly' || key === 'watchPreview' || key === 'courtFollow' || key === 'keepAnalysisCopy') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
   if (key === 'lastGame') return (parseLastGame(raw) ? raw : undefined) as Settings[K] | undefined;
   if (key === 'lens') return ((LENSES as string[]).includes(raw) ? raw : undefined) as Settings[K] | undefined;
   return undefined;
