@@ -33,6 +33,8 @@ export interface TrackerOptions {
   smoothing?: number;
   /** How far outside the court lines, as a fraction of its size, a person still counts as a player. */
   margin?: number;
+  /** How far outside the side lines, as a fraction of the court's width, a person still counts as a player: less than `margin` (which is for the ends), because the next court's players stand just beyond the side lines. */
+  sideMargin?: number;
 }
 
 interface Slot {
@@ -98,7 +100,7 @@ export class PlayerTrackerCore {
   private o: Required<TrackerOptions>;
 
   constructor(options: TrackerOptions) {
-    this.o = { minScore: 0.4, gateMetres: 2, maxLostFrames: 30, smoothing: 0.5, margin: 0.25, ...options };
+    this.o = { minScore: 0.4, gateMetres: 2, maxLostFrames: 30, smoothing: 0.5, margin: 0.25, sideMargin: 0.12, ...options };
     this.slots = new Array(options.nNear + options.nFar).fill(null);
   }
 
@@ -108,11 +110,12 @@ export class PlayerTrackerCore {
 
   update(detections: Detection[], map: CourtMap, g: FrameGeometry): Track[] {
     const m = this.o.margin;
+    const sm = this.o.sideMargin;
     const pts: Pos[] = [];
     for (const d of detections) {
       if (d.score < this.o.minScore) continue;
       const c = map.toCourt(footToScreen(d, g));
-      if (c.u < -m || c.u > 1 + m || c.v < -m || c.v > 1 + m) continue; // spectators, people on other courts
+      if (c.u < -sm || c.u > 1 + sm || c.v < -m || c.v > 1 + m) continue; // spectators, people on other courts
       pts.push({ u: c.u, v: c.v, score: d.score, look: d.look });
     }
     this.side(0, this.o.nNear, pts.filter((p) => p.v >= 0.5));

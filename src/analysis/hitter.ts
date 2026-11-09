@@ -2,8 +2,14 @@ import { COURT_W, type CourtMap, type Pt } from './court';
 import type { Track } from './players';
 import type { Side } from '../engine/types';
 
-/** Beyond this many body heights from every player, the shuttle was not hit by anyone we are tracking. */
-const MAX_BODY_HEIGHTS = 2.5;
+/**
+ * Beyond this many body heights from every player, the shuttle was not hit by anyone we are tracking. A racket reaches about a body
+ * height from the feet in any direction (a smash is above the head, a net shot is out in front), measured to the top of the body, so a
+ * real hit is within about one. It was 2.5, which let the shuttles of the next court count as hits whenever one of our players was
+ * in the same part of the picture: in a recording in a hall with several courts, hits at 1.4 to 2.5 body heights were all on other
+ * courts, and the ones at 0.1 to 0.9 were the player's own.
+ */
+const MAX_BODY_HEIGHTS = 1.2;
 
 /**
  * Which side hit the shuttle: the side of the player nearest to it in the picture at that moment. This uses the picture, not the

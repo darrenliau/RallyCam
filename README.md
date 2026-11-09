@@ -357,3 +357,13 @@ What iOS allows: a watch cannot wake the phone or bring RallyCam to the front, a
 Not tried on a phone and watch yet.
 
 Watch: the score is now on the controls page too. A shared `ScoreRow` (the two scores with who serves and from which court between them) is at the top of the buttons page while a game is being scored, so the score is in view while points are added, undone or swapped; the picture page still shows it under the picture.
+
+## Offline replay with the players (option A) and what it showed
+New tools: `tools/read_rings.py` reads the rings RallyCam drew under the players out of a recorded video (the tracker's own positions at the time) and `tools/replay-game.ts` plays a recording's shuttle track through the live logic with those players: the model's filter, the court gate (`--gate`), the nearest player at each turn as the hitter, turns with nobody near thrown out, and the shot speeds; `--players-on-court` drops rings on other courts. Needs `pip install opencv-python-headless numpy` for the ring reader.
+First 45 s of the second-hall recording, with the court corners marked on a frame of it:
+- The shuttle model saw the shuttle in 764 frames; 558 samples passed the filter; **272 after the court gate**: about half the sightings were on other courts.
+- The app's own tracker in that recording had a **person on the next court as one of the four players** (the pink ring sits on the red-shirted player at the right), so shuttles over there were "hit by" a tracked player. With rings on other courts dropped (`--players-on-court`) and the gate on, 19 turns of the shuttle remain: 10 with a player near, 3 with nobody near, 6 with no players seen.
+- **Hits were accepted up to 2.5 body heights from a player**; the ones at 1.4 to 2.5 body heights were all shuttles on other courts, and the real ones were 0.1 to 0.9. So `MAX_BODY_HEIGHTS` in `src/analysis/hitter.ts` is now **1.2** (a racket reaches about a body height from the feet).
+- **The player tracker took anyone within 25% of the court's width beside a side line** (1.5 m, which is where the next court's players stand), so `sideMargin` (default 0.12, about 0.7 m) now applies across the court while `margin` (0.25) stays for beyond the baselines.
+- No shot speed was believable in this window: too few clean shots with both hitters on this court (a shot needs at least 6 sightings between two hits with a player near each). Speed needs real rallies on the court being filmed.
+Not done offline: speeds against a known value; there is no ground truth in these clips.

@@ -21,6 +21,13 @@ describe('hitterSide', () => {
     const feet = map.toScreen(near.u, near.v);
     expect(hitterSide({ x: feet.x, y: feet.y - 200 }, [near], map)?.side).toBe('A');
   });
+  it('does not call a shuttle two body heights away from a player a hit by them (it is on another court)', () => {
+    const feet = map.toScreen(near.u, near.v);
+    const along = map.toScreen(near.u + 0.05, near.v);
+    const body = 1.7 * (Math.hypot(along.x - feet.x, along.y - feet.y) / (0.05 * 6.1));
+    expect(hitterSide({ x: feet.x + 0.6 * body, y: feet.y - 1.3 * body }, [near], map)?.side).toBe('A');  // a smash out to the side, above the head
+    expect(hitterSide({ x: feet.x + 2 * body, y: feet.y - 0.5 * body }, [near], map)).toBeUndefined();
+  });
   it('says nothing when the shuttle is nowhere near a player', () => {
     expect(hitterSide({ x: 20, y: 20 }, [near, far], map)).toBeUndefined();
   });

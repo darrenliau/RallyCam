@@ -194,3 +194,14 @@ describe('lookDistance', () => {
     expect(lookDistance([100, 90, 200], [100, 200, 90])).toBe(1);
   });
 });
+
+describe('PlayerTrackerCore: people beside the court', () => {
+  it('ignores a person standing beside the side line (the next court), but not one behind a baseline', () => {
+    const beside = new PlayerTrackerCore({ nNear: 1, nFar: 1 }).update([personAt(0.5, 0.85), personAt(0.5, 0.15), personAt(1.2, 0.8)], map, g);
+    expect(beside.length).toBe(2);   // the third person, 20% of the court's width beyond the side line, is not a player
+    const justOut = new PlayerTrackerCore({ nNear: 1, nFar: 1 }).update([personAt(1.08, 0.8), personAt(0.5, 0.15)], map, g);
+    expect(byId(justOut)[0]).toBeDefined(); // a player 8% beyond the side line still counts
+    const behind = new PlayerTrackerCore({ nNear: 1, nFar: 1 }).update([personAt(0.5, 1.15), personAt(0.5, 0.15)], map, g);
+    expect(byId(behind)[0]).toBeDefined(); // chasing a shot behind the baseline counts
+  });
+});
