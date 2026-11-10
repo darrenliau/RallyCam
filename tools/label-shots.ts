@@ -4,7 +4,7 @@
  * every call is made from where the players stood, how far the shuttle went and how fast (confidence at most 0.55).
  *
  *   npx tsx tools/label-shots.ts --rings rings.csv --corners corners.json --ball ball.csv.gz --ball-json ball.json --names Wing,Mia,Darren,Jun
- *                                [--ball-offset 0] [--seconds 15] [--gate] [--out shots.json]
+ *                                [--ball-offset 0] [--seconds 15] [--gate] [--players 0,2] [--out shots.json]
  *
  * rings.csv is from tools/read_rings.py (players 0 to 3 = lime, teal, purple, pink, so the names go in that order). Prints a table; with --out also
  * writes the shots as JSON for tools/burn-shot-labels.sh.
@@ -52,6 +52,8 @@ for (const list of rings) {
   });
   list.length = 0; list.push(...keep);
 }
+const ONLY = (flag('--players') ?? '').split(',').filter(Boolean).map(Number);
+if (ONLY.length) rings.forEach((l, i) => { if (!ONLY.includes(i)) l.length = 0; });   // for example singles: 0 (lime) and 2 (purple)
 function tracksAt(t: number): Track[] {
   const out: Track[] = [];
   rings.forEach((list, id) => {
