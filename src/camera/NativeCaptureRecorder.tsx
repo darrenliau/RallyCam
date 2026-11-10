@@ -1,6 +1,7 @@
 import { newAnalysisVideoFile, newGameVideoFile } from '../export/storage';
 import { forwardRef, useEffect, useImperativeHandle, useRef } from 'react';
 import { Capture, CapturePreview } from '../../modules/rallycam-export/src/capture';
+import { boxToReference } from '../analysis/framing';
 import type { RecorderHandle, RecorderProps } from './types';
 
 /** The camera records at this frame rate where the phone can (120 on recent iPhones). */
@@ -12,6 +13,9 @@ const VIDEO_FPS = 60;
  * iPhone camera made for RallyCam (modules/rallycam-export/ios): a preview, person detection with Apple's Vision framework,
  * and a recorder that draws the overlay onto every frame while it records. The saved file already has the overlay in it.
  */
+/** Boxes from a zoomed picture (lens zoom mode) as boxes of the full picture, which is what the trackers work in. */
+const boxToReferenceBox = <T extends { x: number; y: number; w: number; h: number; z?: number }>(b: T): T => boxToReference(b, b.z);
+
 const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, onInterruption, onPressure, detection, videoProfile, lens, onLens, analysisCopy, framing, onFraming }, ref) {
   const native = Capture!;
   const analysisUri = useRef<string | undefined>(undefined);
@@ -28,7 +32,7 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
         if (cancelled) return;
         onFps(info.fps);
         onLens?.({ lens: info.lens, available: native.getLenses() });
-        onFraming?.(info.framing ?? 'off');
+        onFraming?.(info.framing ?? 'off', info.lensWideRatio || undefined);
         onReady();
       })
       .catch((e: Error) => onError(e.message));
@@ -46,7 +50,7 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
   const onDetections = detection?.onDetections;
   useEffect(() => {
     if (!onDetections) return;
-    const sub = native.addListener('onDetections', (e) => onDetections(e.boxes.map(({ ly, lcb, lcr, ...box }) => (ly != null && lcb != null && lcr != null ? { ...box, look: [ly, lcb, lcr] as [number, number, number] } : box))));
+    const sub = native.addListener('onDetections', (e) => onDetections(e.boxes.map(boxToReferenceBox).map(({ ly, lcb, lcr, z: _z, ...box }) => (ly != null && lcb != null && lcr != null ? { ...box, look: [ly, lcb, lcr] as [number, number, number] } : box))));
     return () => sub.remove();
   }, [native, onDetections]);
 

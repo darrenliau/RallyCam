@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decodePose, hitPose, JOINTS, matchBox, packPose, PoseHistory, poseFeatures, unpackPose, type Pose } from './pose';
+import { poseEventToReference, decodePose, hitPose, JOINTS, matchBox, packPose, PoseHistory, poseFeatures, unpackPose, type Pose } from './pose';
 
 /** A standing figure in a unit box; `wristY` is where both wrists are. */
 function figure(wristY: number, t = 0): Pose {
@@ -74,5 +74,18 @@ describe('packing and history', () => {
     const boxes = [{ x: 0.1, y: 0.1, w: 0.1, h: 0.3 }, { x: 0.6, y: 0.1, w: 0.1, h: 0.3 }];
     expect(matchBox({ x: 0.61, y: 0.12, w: 0.1, h: 0.3 }, boxes)).toBe(1);
     expect(matchBox({ x: 0.9, y: 0.5, w: 0.1, h: 0.3 }, boxes)).toBe(-1);
+  });
+});
+
+describe('poseEventToReference', () => {
+  it('leaves an event without zoom alone and shrinks one taken at 2x about the middle', () => {
+    const e = { t: 1, x: 0.5, y: 0.5, w: 0.2, h: 0.4, kp: [0.6, 0.7, 0.9] };
+    expect(poseEventToReference(e)).toBe(e);
+    const r = poseEventToReference({ ...e, z: 2 });
+    expect(r.x).toBeCloseTo(0.5);
+    expect(r.w).toBeCloseTo(0.1);
+    expect(r.kp[0]).toBeCloseTo(0.55);
+    expect(r.kp[1]).toBeCloseTo(0.6);
+    expect(r.kp[2]).toBe(0.9);
   });
 });

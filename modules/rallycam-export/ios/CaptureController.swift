@@ -8,8 +8,10 @@ struct CaptureInfo {
   let width: Int
   let height: Int
   let lens: String
-  /// "crop" when the camera really runs in auto-framing crop mode (4K, the saved video is a moving window), else "off".
+  /// "crop" when the camera really runs in auto-framing crop mode (4K, the saved video is a moving window), "lens" when it zooms the real lens, else "off".
   var framing: String = "off"
+  /// Lens zoom mode: the window width of the tightest zoom as a fraction of the full picture (0.5 when the 1x lens takes over at 2x).
+  var lensWideRatio: Double = 0
 }
 
 enum CaptureError: LocalizedError {
@@ -74,6 +76,13 @@ final class CaptureController: NSObject {
   private var viewTarget = (cx: 0.5, cy: 0.5, w: 1.0)   // where JavaScript wants the window, as fractions of the full picture
   private var viewNow = (cx: 0.5, cy: 0.5, w: 1.0)      // where it is, eased toward the target on every frame
   private var viewNowT: Double?
+  // Lens zoom mode: the dual-wide camera, whose zoom factor 1 is the full (0.5x) picture. The frames it delivers are already zoomed.
+  private var lensActive = false
+  private var lensDevice: AVCaptureDevice?
+  private var lensMaxZoom = 2.0
+  private var lensCommanded = 1.0
+  private let zoomLock = NSLock()
+  private var zoomHistory: [(t: Double, z: Double)] = []   // the zoom factor of each recent frame, by camera time
   private var worldOverlayImage: CIImage?               // crop mode: the part of the overlay that belongs to the picture, at camera size (guarded by overlayLock)
 
   // Shuttle tracking (experimental): looks for small fast-moving things in the court area, see ShuttleTracker.swift
@@ -214,7 +223,7 @@ final class CaptureController: NSObject {
 
   /// What auto-framing this phone can do, for the Settings screen (see src/framingSupport.ts).
   /// crop: the ultra-wide camera has a 4K format, and `cropFps` is the most frames a second it can do at 4K.
-  /// lens: one camera that joins the ultra-wide and the wide lens, so the real zoom can glide from one to the other (not built yet: always false).
+  /// lens: one camera that joins the ultra-wide and the wide lens, so the real zoom can glide from one to the other (the ultra-wide / wide camera exists and has a 1080p format).
   func framingSupport() -> [String: Any] {
     var cropFps = 0
     if let ultra = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back) {
@@ -225,8 +234,11 @@ final class CaptureController: NSObject {
         cropFps = max(cropFps, Int(format.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0))
       }
     }
-    // Lens mode is not built yet, so it is reported as not possible whatever the phone has.
-    return ["cropFps": cropFps, "lens": false]
+    var lens = false
+    if let virtual = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) ?? AVCaptureDevice.default(.builtInTripleCamera, for: .video, position: .back) {
+      lens = bestFormat(of: virtual, targetFps: 30) != nil
+    }
+    return ["cropFps": cropFps, "lens": lens]
   }
 
   /// Switches to another lens while the camera is running. Not while recording: the picture, and so the court, would jump.
@@ -284,7 +296,7 @@ final class CaptureController: NSObject {
         self.refreshOrientation()
       }
     }
-    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens, framing: framingActive ? "crop" : "off")
+    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens, framing: framingActive ? "crop" : lensActive ? "lens" : "off", lensWideRatio: lensActive ? 1 / lensMaxZoom : 0)
   }
 
   private var observing = false
@@ -371,6 +383,14 @@ final class CaptureController: NSObject {
       chosen = (ultra, pick.format, pick.fps, "ultra-wide")
       cropped = true
     }
+    // Auto-framing lens zoom: the camera that joins the ultra-wide and wide lenses, which zooms from the full picture (factor 1) to the 1x lens.
+    var lensZoom = false
+    if framingMode == "lens", chosen == nil,
+       let virtual = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) ?? AVCaptureDevice.default(.builtInTripleCamera, for: .video, position: .back),
+       let pick = bestFormat(of: virtual, targetFps: targetFps) {
+      chosen = (virtual, pick.format, pick.fps, "ultra-wide")   // reported as the ultra-wide: at zoom 1 it is, so saved courts still fit
+      lensZoom = true
+    }
     if chosen == nil {
       var candidates = wanted == "auto" ? Array(CaptureController.lensTypes.prefix(2)) : CaptureController.lensTypes.filter { $0.1 == wanted }
       if candidates.isEmpty || AVCaptureDevice.default(candidates[0].0, for: .video, position: .back) == nil { candidates = Array(CaptureController.lensTypes.prefix(2)) }
@@ -415,6 +435,12 @@ final class CaptureController: NSObject {
       let duration = CMTime(value: 1, timescale: CMTimeScale(chosen.fps))
       device.activeVideoMinFrameDuration = duration
       device.activeVideoMaxFrameDuration = duration
+      if lensZoom {
+        device.videoZoomFactor = 1
+        let switchOver = device.virtualDeviceSwitchOverVideoZoomFactors.first?.doubleValue ?? 2
+        lensMaxZoom = max(1.2, min(switchOver, Double(chosen.format.videoMaxZoomFactor)))
+        lensCommanded = 1
+      }
       // Straight court lines matter for the court mapping. The ultra-wide camera bends them unless this is on.
       if device.isGeometricDistortionCorrectionSupported { device.isGeometricDistortionCorrectionEnabled = true }
       device.unlockForConfiguration()
@@ -428,9 +454,12 @@ final class CaptureController: NSObject {
       if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .off }
     }
     framingActive = cropped
+    lensActive = lensZoom
+    lensDevice = lensZoom ? device : nil
+    zoomLock.lock(); zoomHistory.removeAll(); zoomLock.unlock()
     frameWidth = cropped ? 3840 : 1920
     frameHeight = cropped ? 2160 : 1080
-    NSLog("RallyCam: framing \(cropped ? "crop (4K)" : "off"), wanted \(framingMode)")
+    NSLog("RallyCam: framing \(cropped ? "crop (4K)" : lensZoom ? "lens" : "off"), wanted \(framingMode)")
     statsLock.lock()
     lens = chosen.lens
     activeDevice = device
@@ -477,8 +506,8 @@ final class CaptureController: NSObject {
 
   // MARK: auto-framing
 
-  /// "off", "crop" or "lens". Takes effect when the camera next starts (so call it before startSession). Lens mode is not built yet and counts as off.
-  func setFramingMode(_ mode: String) { framingMode = mode == "crop" ? "crop" : "off" }
+  /// "off", "crop" or "lens". Takes effect when the camera next starts (so call it before startSession).
+  func setFramingMode(_ mode: String) { framingMode = mode == "crop" || mode == "lens" ? mode : "off" }
 
   /// Where JavaScript wants the window (centre and width as fractions of the full picture). The saved video eases toward it on every frame.
   func setFramingTarget(cx: Double, cy: Double, w: Double) {
@@ -486,6 +515,60 @@ final class CaptureController: NSObject {
     viewTarget = (cx, cy, w)
     if !viewHasTarget { viewNow = viewTarget; viewNowT = nil; viewHasTarget = true }
     viewLock.unlock()
+  }
+
+  /// Lens mode: zoom the real lens so the picture shows a window `w` wide (1 is the full picture), gliding there at up to 1.5 doublings a second.
+  func setLensTarget(w: Double) {
+    sessionQueue.async {
+      guard self.lensActive, let device = self.lensDevice else { return }
+      let z = min(self.lensMaxZoom, max(1, 1 / max(0.05, w)))
+      if abs(z - self.lensCommanded) < 0.003 { return }
+      do {
+        try device.lockForConfiguration()
+        device.ramp(toVideoZoomFactor: z, withRate: 1.5)
+        device.unlockForConfiguration()
+        self.lensCommanded = z
+      } catch {}
+    }
+  }
+
+  private func recordZoom(_ t: Double, _ z: Double) {
+    zoomLock.lock()
+    zoomHistory.append((t, z))
+    if zoomHistory.count > 300 { zoomHistory.removeFirst(zoomHistory.count - 300) }
+    zoomLock.unlock()
+  }
+
+  /// The zoom factor the frame at camera time `t` was taken with (1 when not in lens mode).
+  private func zoomAt(_ t: Double) -> Double {
+    guard lensActive else { return 1 }
+    zoomLock.lock()
+    defer { zoomLock.unlock() }
+    var best = zoomHistory.last?.z ?? 1
+    var bestD = Double.infinity
+    for e in zoomHistory.reversed() {
+      let d = abs(e.t - t)
+      if d < bestD { bestD = d; best = e.z } else if e.t < t { break }
+    }
+    return best
+  }
+
+  private func currentZoom() -> Double {
+    zoomLock.lock()
+    defer { zoomLock.unlock() }
+    return zoomHistory.last?.z ?? 1
+  }
+
+  /// A region given in the full picture, as a region of the zoomed picture the camera delivers now (lens mode), kept inside it; nil when none of it is in view.
+  private func viewROI(_ r: CGRect?) -> CGRect? {
+    guard let r, lensActive else { return r }
+    let z = currentZoom()
+    if z <= 1.001 { return r }
+    let w = 1 / z
+    let o = 0.5 - w / 2
+    let x0 = max(0, (r.minX - o) / w), y0 = max(0, (r.minY - o) / w)
+    let x1 = min(1, (r.maxX - o) / w), y1 = min(1, (r.maxY - o) / w)
+    return x1 - x0 > 0.02 && y1 - y0 > 0.02 ? CGRect(x: x0, y: y0, width: x1 - x0, height: y1 - y0) : nil
   }
 
   /// The window for the frame at `t` seconds: eased toward the target with a time constant of 0.12 s, and kept inside the picture.
@@ -534,9 +617,11 @@ final class CaptureController: NSObject {
       }
       var world: CIImage?
       var screen: CIImage?
-      if self.framingActive {
-        world = render(OverlayRenderer(file: scene, only: { $0.wd == 1 }), width: self.frameWidth, height: self.frameHeight)
-        screen = render(OverlayRenderer(file: scene, only: { $0.wd != 1 }), width: self.outputWidth, height: self.outputHeight)
+      if self.framingActive || self.lensActive {
+        // lens mode: the picture's items are drawn twice as large as the frame, so a zoom of up to 2x is still sharp, and scaled on every frame to the zoom of that frame
+        let lens = self.lensActive
+        world = render(OverlayRenderer(file: scene, only: { $0.wd == 1 }), width: lens ? self.frameWidth * 2 : self.frameWidth, height: lens ? self.frameHeight * 2 : self.frameHeight)
+        screen = render(OverlayRenderer(file: scene, only: { $0.wd != 1 }), width: lens ? self.frameWidth : self.outputWidth, height: lens ? self.frameHeight : self.outputHeight)
         if world == nil || screen == nil {
           self.bump { self.failed += 1; self.lastProblem = "overlay image could not be made" }
           return
@@ -623,7 +708,7 @@ final class CaptureController: NSObject {
   private func detectIfDue(_ pixelBuffer: CVPixelBuffer) {
     let now = CACurrentMediaTime()
     detectLock.lock()
-    let roi = detectionROI
+    let roi = viewROI(detectionROI)
     let due = roi != nil && !detectBusy && now - lastDetect >= 0.066
     if due { detectBusy = true; lastDetect = now; detectRound += 1 }
     let round = detectRound
@@ -674,7 +759,8 @@ final class CaptureController: NSObject {
       self.people = all.map { $0.rect }
       self.peopleAt = CACurrentMediaTime()
       self.detectLock.unlock()
-      self.onDetections?(all.map { $0.dictionary })
+      let z = self.currentZoom()
+      self.onDetections?(all.map { var d = $0.dictionary; if self.lensActive { d["z"] = z }; return d })
     }
   }
 
@@ -777,7 +863,7 @@ final class CaptureController: NSObject {
         kp += [0, 0, 0]
       }
     }
-    return ["t": time, "x": Double(rect.minX), "y": Double(rect.minY), "w": Double(rect.width), "h": Double(rect.height), "kp": kp]
+    return ["t": time, "z": zoomAt(time), "x": Double(rect.minX), "y": Double(rect.minY), "w": Double(rect.width), "h": Double(rect.height), "kp": kp]
   }
 
   /// Intersection over union of two boxes, 0 to 1.
@@ -884,6 +970,7 @@ final class CaptureController: NSObject {
       guard let self, let callback = self.onShuttleModel else { return }
       let list: [[String: Any]] = frames.map { f in
         var d: [String: Any] = ["t": f.t]
+        if self.lensActive { d["z"] = self.zoomAt(f.t) }
         if let x = f.x, let y = f.y { d["x"] = x; d["y"] = y }
         return d
       }
@@ -911,7 +998,7 @@ final class CaptureController: NSObject {
     shuttleFrame += 1
     guard shuttleFrame % 2 == 0 else { return }
     shuttleLock.lock()
-    let roi = shuttleROI
+    let roi = viewROI(shuttleROI)
     let due = roi != nil && !shuttleBusy
     if due { shuttleBusy = true }
     shuttleLock.unlock()
@@ -959,6 +1046,7 @@ final class CaptureController: NSObject {
         self.lastShuttleEmit = t
         var payload: [String: Any] = [
           "t": t,
+          "z": zoomAt(t),
           "candidates": result.candidates.count,
           "shaky": result.shaky,
         ]
@@ -1226,6 +1314,21 @@ final class CaptureController: NSObject {
         .transformed(by: CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
         .transformed(by: CGAffineTransform(scaleX: CGFloat(outputWidth) / cw, y: CGFloat(outputHeight) / ch))
       if let overlay { image = overlay.composited(over: image) }
+    } else if lensActive {
+      // Lens zoom: the frame is already the zoomed picture. The picture's items (made for the full picture, at twice the frame size) are scaled by this
+      // frame's zoom about the centre, then the screen's items go on top, then everything is scaled to the size of the file.
+      overlayLock.lock()
+      let world = worldOverlayImage
+      overlayLock.unlock()
+      if let world {
+        let z = CGFloat(zoomAt(CMTimeGetSeconds(time)))
+        let move = CGAffineTransform(scaleX: z / 2, y: z / 2).concatenating(CGAffineTransform(translationX: sourceWidth / 2 * (1 - z), y: sourceHeight / 2 * (1 - z)))
+        image = world.transformed(by: move).composited(over: image).cropped(to: CGRect(x: 0, y: 0, width: sourceWidth, height: sourceHeight))
+      }
+      if let overlay { image = overlay.composited(over: image) }
+      if Int(sourceWidth) != outputWidth || Int(sourceHeight) != outputHeight {
+        image = image.transformed(by: CGAffineTransform(scaleX: CGFloat(outputWidth) / sourceWidth, y: CGFloat(outputHeight) / sourceHeight))
+      }
     } else {
       if let overlay { image = overlay.composited(over: image) }
       // The overlay is drawn at camera size first, then everything is scaled down to the size of the file.
@@ -1373,6 +1476,7 @@ extension CaptureController: AVCaptureVideoDataOutputSampleBufferDelegate, AVCap
 
     guard output === videoOutput, let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
     let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer)
+    if lensActive, let d = lensDevice { recordZoom(CMTimeGetSeconds(pts), Double(d.videoZoomFactor)) }
     if framesIn % 30 == 0 {
       let measured = CaptureController.brightness(of: pixelBuffer)
       bump { luma = measured }

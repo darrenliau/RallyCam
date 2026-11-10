@@ -196,3 +196,27 @@ export function startWindow(court: { x: number; y: number }[], minW = WIDE_RATIO
   const xs = court.map((p) => p.x), ys = court.map((p) => p.y);
   return clampWindow({ cx: (Math.min(...xs) + Math.max(...xs)) / 2, cy: (Math.min(...ys) + Math.max(...ys)) / 2, w: minW }, minW);
 }
+
+/**
+ * Lens zoom mode: the camera delivers the zoomed picture, so what it reports (people, the shuttle) is in the zoomed picture. The window of a
+ * frame taken at zoom factor `z` (1 = the full picture) is centred and 1/z wide.
+ */
+export const windowForZoom = (z: number): Window => ({ cx: 0.5, cy: 0.5, w: 1 / Math.max(1, z) });
+
+/** A point as fractions of the delivered picture to fractions of the full picture. Unchanged when there was no zoom. */
+export function pointToReference(p: P, z?: number): P {
+  return !z || z <= 1.001 ? p : viewToWorld(p, windowForZoom(z));
+}
+
+/** A box (x, y top left, w, h) of the delivered picture to the full picture. */
+export function boxToReference<T extends { x: number; y: number; w: number; h: number }>(b: T, z?: number): T {
+  if (!z || z <= 1.001) return b;
+  const k = 1 / z;
+  const tl = pointToReference(b, z);
+  return { ...b, x: tl.x, y: tl.y, w: b.w * k, h: b.h * k };
+}
+
+/** A point of the full picture as a point of the delivered one (for telling the camera where to look). */
+export function pointToView(p: P, z?: number): P {
+  return !z || z <= 1.001 ? p : worldToView(p, windowForZoom(z));
+}

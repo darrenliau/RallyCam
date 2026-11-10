@@ -2,7 +2,8 @@ import { NativeModule, requireNativeView, requireOptionalNativeModule } from 'ex
 import type { ComponentType } from 'react';
 import type { ViewProps } from 'react-native';
 
-export interface CaptureBox { x: number; y: number; w: number; h: number; score: number; ly?: number; lcb?: number; lcr?: number }
+/** `z` is the zoom factor of the frame in lens zoom mode (the numbers are then in the zoomed picture; see framing.ts boxToReference). */
+export interface CaptureBox { x: number; y: number; w: number; h: number; score: number; ly?: number; lcb?: number; lcr?: number; z?: number }
 
 /** What the experimental shuttle tracker reports. Positions are fractions of the camera frame. */
 export interface ShuttleEvent {
@@ -16,11 +17,13 @@ export interface ShuttleEvent {
   vy?: number;
   misses?: number;
   tTrack?: number;
+  /** Zoom factor of the frame (lens zoom mode). */
+  z?: number;
 }
 
 /** What the shuttle model saw in a window of 8 frames in a row: positions are fractions of the camera frame, missing when nothing was seen. */
 export interface ShuttleModelEvent {
-  frames: { t: number; x?: number; y?: number }[];
+  frames: { t: number; x?: number; y?: number; z?: number }[];
   predictMs: number;
 }
 
@@ -45,13 +48,13 @@ type Events = {
   onShuttle: (e: ShuttleEvent) => void;
   onShuttleModel: (e: ShuttleModelEvent) => void;
   /** Body poses of the players nearest the shuttle (see src/analysis/pose.ts decodePose). */
-  onPose: (e: { poses: { t: number; x: number; y: number; w: number; h: number; kp: number[] }[] }) => void;
+  onPose: (e: { poses: { t: number; z?: number; x: number; y: number; w: number; h: number; kp: number[] }[] }) => void;
   /** A button pressed on the Apple Watch app. */
   onWatchCommand: (e: { command?: string; side?: string }) => void;
 };
 
 declare class RallyCamCaptureModule extends NativeModule<Events> {
-  startSession(targetFps: number, lens: string): Promise<{ fps: number; width: number; height: number; lens: string; framing?: 'off' | 'crop' }>;
+  startSession(targetFps: number, lens: string): Promise<{ fps: number; width: number; height: number; lens: string; framing?: 'off' | 'crop' | 'lens'; lensWideRatio?: number }>;
   getLenses(): string[];
   /** What auto-framing the phone can do (only in builds that have it): the most frames a second at 4K on the ultra-wide camera (0 = no 4K), and whether a camera joining the ultra-wide and wide lenses exists. */
   getFramingSupport?(): { cropFps: number; lens: boolean };

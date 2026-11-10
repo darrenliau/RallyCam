@@ -39,9 +39,20 @@ export interface PoseSample {
 
 /** What the native side sends for one person: the box, and 13 joints as x, y, confidence in fractions of the frame. */
 export interface PoseEvent {
+  /** The zoom factor of the frame (lens zoom mode); the numbers below are in the zoomed picture. */
+  z?: number;
   t: number;
   x: number; y: number; w: number; h: number;
   kp: number[];
+}
+
+/** A pose event in the full picture, from one taken in a zoomed picture (lens zoom mode). */
+export function poseEventToReference(e: PoseEvent): PoseEvent {
+  if (!e.z || e.z <= 1.001) return e;
+  const k = 1 / e.z;
+  const at = (v: number) => 0.5 + (v - 0.5) * k;
+  const kp = e.kp.map((v, i) => (i % 3 === 2 ? v : at(v)));
+  return { ...e, x: at(e.x), y: at(e.y), w: e.w * k, h: e.h * k, kp };
 }
 
 /** Joints below this confidence are treated as not seen. */

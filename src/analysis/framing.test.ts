@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { startWindow, applyViewTransform, viewTransform, anyOutside, clampWindow, Framer, fullWindow, viewToWorld, wantedWindow, WIDE_RATIO, worldToView, DEFAULT_FRAMING } from './framing';
+import { boxToReference, pointToReference, pointToView, windowForZoom, startWindow, applyViewTransform, viewTransform, anyOutside, clampWindow, Framer, fullWindow, viewToWorld, wantedWindow, WIDE_RATIO, worldToView, DEFAULT_FRAMING } from './framing';
 
 describe('window maths', () => {
   it('maps the full window to itself', () => {
@@ -190,5 +190,35 @@ describe('startWindow', () => {
   });
   it('is just the closer view without a court', () => {
     expect(startWindow([])).toEqual({ cx: 0.5, cy: 0.5, w: WIDE_RATIO });
+  });
+});
+
+describe('lens zoom coordinates', () => {
+  it('is centred and 1/z wide', () => {
+    expect(windowForZoom(2)).toEqual({ cx: 0.5, cy: 0.5, w: 0.5 });
+    expect(windowForZoom(0.5).w).toBe(1);
+  });
+  it('leaves points alone with no zoom', () => {
+    expect(pointToReference({ x: 0.3, y: 0.4 })).toEqual({ x: 0.3, y: 0.4 });
+    expect(pointToReference({ x: 0.3, y: 0.4 }, 1)).toEqual({ x: 0.3, y: 0.4 });
+  });
+  it('maps the middle of a 2x picture to the middle and its corners to the quarter points', () => {
+    expect(pointToReference({ x: 0.5, y: 0.5 }, 2)).toEqual({ x: 0.5, y: 0.5 });
+    expect(pointToReference({ x: 0, y: 0 }, 2)).toEqual({ x: 0.25, y: 0.25 });
+    expect(pointToReference({ x: 1, y: 1 }, 2)).toEqual({ x: 0.75, y: 0.75 });
+  });
+  it('shrinks a box with the zoom', () => {
+    const b = boxToReference({ x: 0.5, y: 0.2, w: 0.2, h: 0.4, score: 0.9 }, 2);
+    expect(b.x).toBeCloseTo(0.5);
+    expect(b.y).toBeCloseTo(0.35);
+    expect(b.w).toBeCloseTo(0.1);
+    expect(b.h).toBeCloseTo(0.2);
+    expect(b.score).toBe(0.9);
+  });
+  it('goes back and forth', () => {
+    const p = { x: 0.62, y: 0.41 };
+    const back = pointToView(pointToReference(p, 1.6), 1.6);
+    expect(back.x).toBeCloseTo(p.x);
+    expect(back.y).toBeCloseTo(p.y);
   });
 });

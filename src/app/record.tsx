@@ -36,10 +36,10 @@ import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../ana
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
 import { effectiveFraming, framingAvailability } from '../framingSupport';
-import { Framer, fullWindow, startWindow, WIDE_RATIO, viewTransform, type ViewTransform } from '../analysis/framing';
+import { Framer, fullWindow, pointToReference, pointToView, startWindow, WIDE_RATIO, viewTransform, type ViewTransform } from '../analysis/framing';
 import { playerSubjects, shuttleSubject } from '../analysis/framingSubjects';
 import { ViewWindow, type ViewWindowHandle } from '../components/ViewWindow';
-import { decodePose, hitPose, PoseHistory } from '../analysis/pose';
+import { decodePose, hitPose, PoseHistory, poseEventToReference } from '../analysis/pose';
 import { toShotRecord } from '../analysis/shotRecord';
 import type { ShotRecord } from '../analysis/overlay';
 import { courtOfServer, inferWinnerFromServe } from '../analysis/nextServe';
@@ -421,7 +421,9 @@ export default function Record() {
   // Auto-framing: a view window that starts tight and widens when play nears the edge (see framing.ts). Only in builds whose camera can do it.
   const framingMode = effectiveFraming(settings.framing, framingAvailability(Capture));   // a mode this phone cannot do counts as off
   // The camera says what it really settled on (it falls back to off when the 4K picture is not possible); until then the wish counts.
-  const [cameraFraming, setCameraFraming] = useState<'off' | 'crop' | null>(null);
+  const [cameraFraming, setCameraFraming] = useState<'off' | 'crop' | 'lens' | null>(null);
+  // Lens zoom: how tight the real lens can go (the window width at the 1x lens), from the camera; the controller's tightest window follows it
+  const [wideRatio, setWideRatio] = useState(WIDE_RATIO);
   const framingOn = framingMode !== 'off' && shuttleOn && cameraFraming !== 'off';
   const framer = useRef(new Framer(fullWindow())).current;
   const previewView = useRef<ViewWindowHandle>(null);
@@ -538,8 +540,9 @@ export default function Record() {
     const poll = () => setModelStatus(native.getShuttleModelStatus());
     poll();
     const id = setInterval(poll, 500);
-    const sub = native.addListener('onShuttleModel', (e) => {
-      if (!e.frames.length) return;
+    const sub = native.addListener('onShuttleModel', (raw) => {
+      if (!raw.frames.length) return;
+      const e = { ...raw, frames: raw.frames.map((f) => (f.x !== undefined && f.y !== undefined && f.z ? { t: f.t, ...pointToReference({ x: f.x, y: f.y }, f.z) } : f)) };
       lastShuttleT.current = e.frames[e.frames.length - 1].t;
       modelMs.current = e.predictMs;
       for (const sample of modelFilter.push(e.frames)) estimator.push(sample);
@@ -566,10 +569,10 @@ export default function Record() {
       native.setFramingTarget?.(framingMode === 'lens' ? 'lens' : 'crop', win.cx, win.cy, win.w);
       return t;
     };
-    framer.setOptions({ panLocked: framingMode === 'lens' });
+    framer.setOptions({ panLocked: framingMode === 'lens', minW: framingMode === 'lens' ? wideRatio : WIDE_RATIO });
     if (aligning) { framer.reset(fullWindow(), Date.now() / 1000); setViewT(apply(framer.window, 0)); return; }
     const c = cornersToFrame(cornersRef.current, geometry());
-    framer.reset(startWindow([c.farLeft, c.farRight, c.nearRight, c.nearLeft]), Date.now() / 1000);
+    framer.reset(startWindow([c.farLeft, c.farRight, c.nearRight, c.nearLeft], framingMode === 'lens' ? wideRatio : WIDE_RATIO), Date.now() / 1000);
     setViewT(apply(framer.window, 600));
     const id = setInterval(() => {
       const subjects = playerSubjects(latest.current.tracks, mapRef.current, geometry());
@@ -579,13 +582,13 @@ export default function Record() {
     }, 125);
     return () => { clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [framingOn, framingMode, aligning]);
+  }, [framingOn, framingMode, aligning, wideRatio]);
 
   // A hot phone: stop tightening; a very hot one: go back to the full picture (the camera and the recording come first)
   useEffect(() => {
     const hot = pressure === 'serious' || pressure === 'critical' || pressure === 'shutdown';
-    framer.setOptions({ tightenRate: hot ? 0 : 0.1, minW: pressure === 'critical' || pressure === 'shutdown' ? 1 : WIDE_RATIO });
-  }, [pressure, framer]);
+    framer.setOptions({ tightenRate: hot ? 0 : 0.1, minW: pressure === 'critical' || pressure === 'shutdown' ? 1 : framingMode === 'lens' ? wideRatio : WIDE_RATIO });
+  }, [pressure, framer, framingMode, wideRatio]);
 
   // Body poses: the native side looks at the players nearest the shuttle; each pose goes to the track standing where its feet are
   useEffect(() => {
@@ -593,8 +596,8 @@ export default function Record() {
     if (!native || !shotTypesOn) return;
     native.setPose(true);
     const sub = native.addListener('onPose', (e) => {
-      for (const ev of e.poses) {
-        const sample = decodePose(ev, FRAME_ASPECT);
+      for (const raw of e.poses) {
+        const sample = decodePose(poseEventToReference(raw), FRAME_ASPECT);
         if (!sample) continue;
         const feet = floorPosition(mapRef.current, frameToScreen({ x: sample.box.x + sample.box.w / 2, y: sample.box.y + sample.box.h }, geometry()));
         let best: { id: number; d: number } | null = null;
@@ -615,7 +618,10 @@ export default function Record() {
     if (!native || !shuttleOn) return;
     const sub = native.addListener('onShuttle', (e) => {
       lastShuttleT.current = e.t;
-      if (e.x != null && e.y != null && (e.misses ?? 0) === 0) estimator.push({ t: e.tTrack ?? e.t, x: e.x, y: e.y });
+      if (e.x != null && e.y != null && (e.misses ?? 0) === 0) {
+        const p = pointToReference({ x: e.x, y: e.y }, e.z);   // lens zoom: the camera reports in the zoomed picture
+        estimator.push({ t: e.tTrack ?? e.t, x: p.x, y: p.y });
+      }
     });
     const id = setInterval(() => {
       const now = lastShuttleT.current;
@@ -623,7 +629,9 @@ export default function Record() {
       if (shotTypesOn) {
         const trail = estimator.trail(now, 0.4);
         const tip = trail[trail.length - 1];
-        native.setPoseFocus(tip ? tip.x : NaN, tip ? tip.y : NaN);
+        const zoom = framingMode === 'lens' ? 1 / framer.window.w : 1;
+        const focus = tip ? pointToView(tip, zoom) : null;   // the camera looks for people in the picture it delivers
+        native.setPoseFocus(focus ? focus.x : NaN, focus ? focus.y : NaN);
         for (const e of estimator.takeShots()) {
           const owner = e.track != null ? assignRef.current[e.track] ?? e.track : null;
           const player = owner != null && owner < names.length ? owner : null;
@@ -739,20 +747,20 @@ export default function Record() {
     }, 120);
     return () => { sub.remove(); clearInterval(id); setShuttle(null); setTrail([]); trailFrame.current = []; shuttleMapRef.current = null; setShuttleMap(null); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shuttleOn, estimator, modelWanted, modelActive, shotTypesOn, names]);
+  }, [shuttleOn, estimator, modelWanted, modelActive, shotTypesOn, names, framingMode]);
 
   // Once the court is locked, the model is shown only the court and the air above it, so the shuttle is bigger to it
   useEffect(() => {
     const native = Capture;
     if (!native || !modelWanted) return;
-    const crop = aligning || !settings.cropModel ? null : modelCrop(shuttleRoiFromCorners(corners, geometry()), FRAME_ASPECT);
+    const crop = aligning || !settings.cropModel || framingMode === 'lens' ? null : modelCrop(shuttleRoiFromCorners(corners, geometry()), FRAME_ASPECT);
     cropGuard.setCrop(crop);
     viewFull.current = false;
     native.setShuttleModelFull(false);
     native.setShuttleModelCrop(crop?.x ?? 0, crop?.y ?? 0, crop?.w ?? 0, crop?.h ?? 0);
     return () => { native.setShuttleModelCrop(0, 0, 0, 0); native.setShuttleModelFull(false); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [modelWanted, aligning, corners, width, height, settings.cropModel]);
+  }, [modelWanted, aligning, corners, width, height, settings.cropModel, framingMode]);
 
   useEffect(() => {
     const region = aligning || !settings.courtOnly ? null : courtRegion(cornersToFrame(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height }));
@@ -899,7 +907,7 @@ export default function Record() {
         corners: cornersToFrame(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height }),
         snapshots: snapshots.current,
         ...(shotRecords.current.length ? { shots: shotRecords.current } : {}),
-        ...(framingOn && cameraFraming === 'crop' ? { framing: 'crop' as const } : {}),
+        ...(framingOn && (cameraFraming === 'crop' || cameraFraming === 'lens') ? { framing: cameraFraming } : {}),
       });
     }
     if (shuttleLogUri.current) {
@@ -1072,7 +1080,7 @@ export default function Record() {
         lens={settings.lens}
         analysisCopy={settings.keepAnalysisCopy && !footage}
         framing={framingOn ? framingMode : 'off'}
-        onFraming={setCameraFraming}
+        onFraming={(mode, ratio) => { setCameraFraming(mode); if (mode === 'lens' && ratio) setWideRatio(ratio); }}
         onLens={setLensInfo}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
         videoProfile={usesNativeCapture ? profile : undefined}
