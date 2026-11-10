@@ -35,6 +35,7 @@ import { decodeBase64 } from '../analysis/base64';
 import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../analysis/courtLines';
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
+import { effectiveFraming, framingAvailability } from '../framingSupport';
 import { Framer, fullWindow, startWindow, viewTransform, type ViewTransform } from '../analysis/framing';
 import { playerSubjects, shuttleSubject } from '../analysis/framingSubjects';
 import { ViewWindow, type ViewWindowHandle } from '../components/ViewWindow';
@@ -418,8 +419,8 @@ export default function Record() {
   const lastShot = useRef<{ at: number; shot: NonNullable<ShuttleStats['lastShot']> } | null>(null);
   const shotTypesOn = shuttleOn && settings.shotTypes;
   // Auto-framing: a view window that starts tight and widens when play nears the edge (see framing.ts). Only in builds whose camera can do it.
-  const framingMode = settings.framing;
-  const framingOn = framingMode !== 'off' && shuttleOn && typeof Capture?.setFramingTarget === 'function';
+  const framingMode = effectiveFraming(settings.framing, framingAvailability(Capture));   // a mode this phone cannot do counts as off
+  const framingOn = framingMode !== 'off' && shuttleOn;
   const framer = useRef(new Framer(fullWindow())).current;
   const previewView = useRef<ViewWindowHandle>(null);
   const worldView = useRef<ViewWindowHandle>(null);

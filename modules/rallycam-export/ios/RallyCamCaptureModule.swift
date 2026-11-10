@@ -85,6 +85,11 @@ public class RallyCamCaptureModule: Module {
       }
     }
 
+    // What auto-framing the phone can do: { cropFps: most frames a second at 4K on the ultra-wide camera (0 = no 4K), lens: a camera joining the ultra-wide and wide lenses exists }.
+    Function("getFramingSupport") { () -> [String: Any] in
+      CaptureController.shared.framingSupport()
+    }
+
     // The lenses this phone has: "ultra-wide", "wide", "tele".
     Function("getLenses") { () -> [String] in
       CaptureController.shared.availableLenses()

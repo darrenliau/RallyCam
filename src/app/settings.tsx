@@ -8,6 +8,7 @@ import { Capture } from '../../modules/rallycam-export/src/capture';
 import { Card, Label } from '../components/ui';
 import { ANALYSIS_MB_PER_MINUTE, formatBytes, freeSpaceBytes, videosFolderStats } from '../export/storage';
 import { FRAMING_MODES, type FramingMode } from '../settingsModel';
+import { effectiveFraming, framingAvailability } from '../framingSupport';
 import { QUALITY, mbPerMinute, updateSettings, useSettings, type VideoQuality } from '../settings';
 import { colors, radius } from '../theme';
 
@@ -109,13 +110,18 @@ export default function Settings() {
             <View style={{ gap: 6 }}>
               <Label>Auto-framing · experimental</Label>
               <Text style={s.muted}>
-                Start with a closer view (about the 1x lens) and widen gradually, in the preview and the saved video, when a player or the shuttle nears the edge. Crop: a moving window cut from a 4K picture. Lens: the real lens zooms. Needs Shuttle tracking above and a build that has it{typeof Capture?.setFramingTarget === 'function' ? '' : ' (this build does not yet, so it stays off)'}.
+                Start with a closer view (about the 1x lens) and widen gradually, in the preview and the saved video, when a player or the shuttle nears the edge. Crop: a moving window cut from a 4K picture. Lens: the real lens zooms. Needs Shuttle tracking above and a phone and build that can do it; a mode that cannot is greyed out with the reason.
               </Text>
               {FRAMING_MODES.map((m: FramingMode) => {
-                const on = settings.framing === m;
+                const avail = framingAvailability(Capture)[m];
+                const on = effectiveFraming(settings.framing, framingAvailability(Capture)) === m;
                 return (
-                  <Pressable key={m} accessibilityRole="radio" accessibilityState={{ selected: on }} onPress={() => updateSettings({ framing: m })} style={[s.option, on && s.optionOn]}>
-                    <Text style={[s.optionTitle, on && { color: colors.bg }]}>{m === 'off' ? 'Off' : m === 'crop' ? 'Crop (4K window)' : 'Lens zoom'}</Text>
+                  <Pressable key={m} accessibilityRole="radio" accessibilityState={{ selected: on, disabled: !avail.ok }} disabled={!avail.ok} onPress={() => updateSettings({ framing: m })} style={[s.option, on && s.optionOn, !avail.ok && { opacity: 0.45 }]}>
+                    <View style={{ flex: 1 }}>
+                      <Text style={[s.optionTitle, on && { color: colors.bg }]}>{m === 'off' ? 'Off' : m === 'crop' ? 'Crop (4K window)' : 'Lens zoom'}</Text>
+                      {!avail.ok && <Text style={s.muted}>Not available: {avail.reason}</Text>}
+                      {avail.ok && avail.note && <Text style={[s.muted, { color: colors.amber }]}>{avail.note}</Text>}
+                    </View>
                   </Pressable>
                 );
               })}

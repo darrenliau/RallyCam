@@ -201,6 +201,24 @@ final class CaptureController: NSObject {
     (.builtInUltraWideCamera, "ultra-wide"), (.builtInWideAngleCamera, "wide"), (.builtInTelephotoCamera, "tele"),
   ]
 
+  /// What auto-framing this phone can do, for the Settings screen (see src/framingSupport.ts).
+  /// crop: the ultra-wide camera has a 4K format, and `cropFps` is the most frames a second it can do at 4K.
+  /// lens: one camera that joins the ultra-wide and the wide lens, so the real zoom can glide from one to the other.
+  func framingSupport() -> [String: Any] {
+    var cropFps = 0
+    if let ultra = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back) {
+      for format in ultra.formats {
+        let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
+        guard dims.width == 3840, dims.height == 2160,
+              CMFormatDescriptionGetMediaSubType(format.formatDescription) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange else { continue }
+        cropFps = max(cropFps, Int(format.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0))
+      }
+    }
+    let lens = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) != nil
+      || AVCaptureDevice.default(.builtInTripleCamera, for: .video, position: .back) != nil
+    return ["cropFps": cropFps, "lens": lens]
+  }
+
   /// Switches to another lens while the camera is running. Not while recording: the picture, and so the court, would jump.
   func switchLens(_ lens: String, targetFps: Int, completion: @escaping (Result<CaptureInfo, Error>) -> Void) {
     sessionQueue.async {
