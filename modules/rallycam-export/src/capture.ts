@@ -51,7 +51,7 @@ type Events = {
 };
 
 declare class RallyCamCaptureModule extends NativeModule<Events> {
-  startSession(targetFps: number, lens: string): Promise<{ fps: number; width: number; height: number; lens: string }>;
+  startSession(targetFps: number, lens: string): Promise<{ fps: number; width: number; height: number; lens: string; framing?: 'off' | 'crop' }>;
   getLenses(): string[];
   /** What auto-framing the phone can do (only in builds that have it): the most frames a second at 4K on the ultra-wide camera (0 = no 4K), and whether a camera joining the ultra-wide and wide lenses exists. */
   getFramingSupport?(): { cropFps: number; lens: boolean };
@@ -76,6 +76,8 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
    * Auto-framing (only in builds that have it). `crop`: the saved video and the preview show a window of the full 4K picture; `lens`: the
    * camera zooms. cx, cy, w are the wanted window in the full picture (see src/analysis/framing.ts).
    */
+  /** Before startSession: the auto-framing mode wanted. The camera may settle on 'off' (the startSession result says). */
+  setFramingMode?(mode: 'off' | 'crop' | 'lens'): void;
   setFramingTarget?(mode: 'crop' | 'lens', cx: number, cy: number, w: number): void;
   setShuttleModel(enabled: boolean): void;
   getShuttleModelStatus(): ShuttleModelStatus;

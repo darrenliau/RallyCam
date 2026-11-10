@@ -8,6 +8,8 @@ struct CaptureInfo {
   let width: Int
   let height: Int
   let lens: String
+  /// "crop" when the camera really runs in auto-framing crop mode (4K, the saved video is a moving window), else "off".
+  var framing: String = "off"
 }
 
 enum CaptureError: LocalizedError {
@@ -64,6 +66,15 @@ final class CaptureController: NSObject {
   // Overlay: replaced by JavaScript a few times a second, composited onto every recorded frame.
   private let overlayLock = NSLock()
   private var overlayImage: CIImage?
+  // Auto-framing (see src/analysis/framing.ts). In `crop` mode the camera runs the ultra-wide at 4K and the saved video is a window cut from it.
+  private var framingMode = "off"        // wanted; set before the camera starts
+  private var framingActive = false      // the camera really is in crop mode
+  private let viewLock = NSLock()
+  private var viewHasTarget = false
+  private var viewTarget = (cx: 0.5, cy: 0.5, w: 1.0)   // where JavaScript wants the window, as fractions of the full picture
+  private var viewNow = (cx: 0.5, cy: 0.5, w: 1.0)      // where it is, eased toward the target on every frame
+  private var viewNowT: Double?
+  private var worldOverlayImage: CIImage?               // crop mode: the part of the overlay that belongs to the picture, at camera size (guarded by overlayLock)
 
   // Shuttle tracking (experimental): looks for small fast-moving things in the court area, see ShuttleTracker.swift
   private let shuttleQueue = DispatchQueue(label: "rallycam.capture.shuttle", qos: .userInitiated)
@@ -203,7 +214,7 @@ final class CaptureController: NSObject {
 
   /// What auto-framing this phone can do, for the Settings screen (see src/framingSupport.ts).
   /// crop: the ultra-wide camera has a 4K format, and `cropFps` is the most frames a second it can do at 4K.
-  /// lens: one camera that joins the ultra-wide and the wide lens, so the real zoom can glide from one to the other.
+  /// lens: one camera that joins the ultra-wide and the wide lens, so the real zoom can glide from one to the other (not built yet: always false).
   func framingSupport() -> [String: Any] {
     var cropFps = 0
     if let ultra = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back) {
@@ -214,9 +225,8 @@ final class CaptureController: NSObject {
         cropFps = max(cropFps, Int(format.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 0))
       }
     }
-    let lens = AVCaptureDevice.default(.builtInDualWideCamera, for: .video, position: .back) != nil
-      || AVCaptureDevice.default(.builtInTripleCamera, for: .video, position: .back) != nil
-    return ["cropFps": cropFps, "lens": lens]
+    // Lens mode is not built yet, so it is reported as not possible whatever the phone has.
+    return ["cropFps": cropFps, "lens": false]
   }
 
   /// Switches to another lens while the camera is running. Not while recording: the picture, and so the court, would jump.
@@ -261,8 +271,6 @@ final class CaptureController: NSObject {
     NSLog("RallyCam: starting the camera, wanted \(targetFps) fps, lens \(wanted)")
     let fps = try configure(targetFps: targetFps, lens: wanted)
     cameraFps = fps
-    frameWidth = 1920
-    frameHeight = 1080
     observeSession()
     if !session.isRunning { session.startRunning() }
     NSLog("RallyCam: camera session running = \(session.isRunning), \(fps) fps, lens \(lens)")
@@ -276,7 +284,7 @@ final class CaptureController: NSObject {
         self.refreshOrientation()
       }
     }
-    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens)
+    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens, framing: framingActive ? "crop" : "off")
   }
 
   private var observing = false
@@ -334,11 +342,11 @@ final class CaptureController: NSObject {
   }
 
   /// The best 1080p format of a camera for the wanted frame rate, and the rate it can really do.
-  private func bestFormat(of device: AVCaptureDevice, targetFps: Int) -> (format: AVCaptureDevice.Format, fps: Int)? {
+  private func bestFormat(of device: AVCaptureDevice, targetFps: Int, width: Int = 1920, height: Int = 1080) -> (format: AVCaptureDevice.Format, fps: Int)? {
     var best: (format: AVCaptureDevice.Format, fps: Int)?
     for format in device.formats {
       let dims = CMVideoFormatDescriptionGetDimensions(format.formatDescription)
-      guard dims.width == 1920, dims.height == 1080 else { continue }
+      guard Int(dims.width) == width, Int(dims.height) == height else { continue }
       guard CMFormatDescriptionGetMediaSubType(format.formatDescription) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange else { continue }
       let maxFps = Int(format.videoSupportedFrameRateRanges.map { $0.maxFrameRate }.max() ?? 30)
       let achievable = min(maxFps, targetFps)
@@ -356,11 +364,20 @@ final class CaptureController: NSObject {
     // The ultra-wide camera (0.5x) sees more of the court from close range. The listed order is the preference: it
     // wins unless the main camera can run at a higher frame rate.
     var chosen: (device: AVCaptureDevice, format: AVCaptureDevice.Format, fps: Int, lens: String)?
-    var candidates = wanted == "auto" ? Array(CaptureController.lensTypes.prefix(2)) : CaptureController.lensTypes.filter { $0.1 == wanted }
-    if candidates.isEmpty || AVCaptureDevice.default(candidates[0].0, for: .video, position: .back) == nil { candidates = Array(CaptureController.lensTypes.prefix(2)) }
-    for (type, name) in candidates {
-      guard let device = AVCaptureDevice.default(type, for: .video, position: .back), let pick = bestFormat(of: device, targetFps: targetFps) else { continue }
-      if chosen == nil || pick.fps > chosen!.fps { chosen = (device, pick.format, pick.fps, name) }
+    // Auto-framing crop: the ultra-wide camera at 4K, if it can do at least 30 frames a second. Otherwise the normal choice below.
+    var cropped = false
+    if framingMode == "crop", let ultra = AVCaptureDevice.default(.builtInUltraWideCamera, for: .video, position: .back),
+       let pick = bestFormat(of: ultra, targetFps: targetFps, width: 3840, height: 2160), pick.fps >= 30 {
+      chosen = (ultra, pick.format, pick.fps, "ultra-wide")
+      cropped = true
+    }
+    if chosen == nil {
+      var candidates = wanted == "auto" ? Array(CaptureController.lensTypes.prefix(2)) : CaptureController.lensTypes.filter { $0.1 == wanted }
+      if candidates.isEmpty || AVCaptureDevice.default(candidates[0].0, for: .video, position: .back) == nil { candidates = Array(CaptureController.lensTypes.prefix(2)) }
+      for (type, name) in candidates {
+        guard let device = AVCaptureDevice.default(type, for: .video, position: .back), let pick = bestFormat(of: device, targetFps: targetFps) else { continue }
+        if chosen == nil || pick.fps > chosen!.fps { chosen = (device, pick.format, pick.fps, name) }
+      }
     }
     guard let chosen else { throw CaptureError.noCamera }
     let device = chosen.device
@@ -410,6 +427,10 @@ final class CaptureController: NSObject {
       connection.videoOrientation = CaptureController.currentVideoOrientation()
       if connection.isVideoStabilizationSupported { connection.preferredVideoStabilizationMode = .off }
     }
+    framingActive = cropped
+    frameWidth = cropped ? 3840 : 1920
+    frameHeight = cropped ? 2160 : 1080
+    NSLog("RallyCam: framing \(cropped ? "crop (4K)" : "off"), wanted \(framingMode)")
     statsLock.lock()
     lens = chosen.lens
     activeDevice = device
@@ -454,6 +475,34 @@ final class CaptureController: NSObject {
     }
   }
 
+  // MARK: auto-framing
+
+  /// "off", "crop" or "lens". Takes effect when the camera next starts (so call it before startSession). Lens mode is not built yet and counts as off.
+  func setFramingMode(_ mode: String) { framingMode = mode == "crop" ? "crop" : "off" }
+
+  /// Where JavaScript wants the window (centre and width as fractions of the full picture). The saved video eases toward it on every frame.
+  func setFramingTarget(cx: Double, cy: Double, w: Double) {
+    viewLock.lock()
+    viewTarget = (cx, cy, w)
+    if !viewHasTarget { viewNow = viewTarget; viewNowT = nil; viewHasTarget = true }
+    viewLock.unlock()
+  }
+
+  /// The window for the frame at `t` seconds: eased toward the target with a time constant of 0.12 s, and kept inside the picture.
+  private func currentWindow(at t: Double) -> (cx: Double, cy: Double, w: Double) {
+    viewLock.lock()
+    defer { viewLock.unlock() }
+    guard viewHasTarget else { return (0.5, 0.5, 1) }
+    if let last = viewNowT {
+      let dt = min(0.25, max(0, t - last))
+      let k = 1 - exp(-dt / 0.12)
+      viewNow = (viewNow.cx + (viewTarget.cx - viewNow.cx) * k, viewNow.cy + (viewTarget.cy - viewNow.cy) * k, viewNow.w + (viewTarget.w - viewNow.w) * k)
+    }
+    viewNowT = t
+    let w = min(1, max(0.25, viewNow.w))
+    return (min(1 - w / 2, max(w / 2, viewNow.cx)), min(1 - w / 2, max(w / 2, viewNow.cy)), w)
+  }
+
   // MARK: overlay
 
   /// `json` is a scene file (see OverlayScene.swift) whose items are all visible now. It replaces the previous overlay.
@@ -468,25 +517,40 @@ final class CaptureController: NSObject {
         self.bump { self.failed += 1; self.lastProblem = "overlay decode: \(error)" }
         return
       }
-      let renderer = OverlayRenderer(file: scene)
-      let w = self.frameWidth
-      let h = self.frameHeight
-      guard let ctx = CGContext(
-        data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
-        space: CGColorSpaceCreateDeviceRGB(),
-        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
-      ) else { return }
-      ctx.translateBy(x: 0, y: CGFloat(h))
-      ctx.scaleBy(x: 1, y: -1)
-      let scale = CGFloat(w) / CGFloat(scene.width)
-      ctx.scaleBy(x: scale, y: scale)
-      renderer.draw(into: ctx, atMs: 0)
-      guard let image = ctx.makeImage() else {
-        self.bump { self.failed += 1; self.lastProblem = "overlay image could not be made" }
-        return
+      // Normally one picture the size of the camera frame. In crop mode two: what belongs to the picture (rings, shuttle trail) at camera size,
+      // cut with the video, and what belongs to the screen (score, cards, court map) at the size of the saved video, drawn after the cut.
+      func render(_ renderer: OverlayRenderer, width w: Int, height h: Int) -> CIImage? {
+        guard let ctx = CGContext(
+          data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+          space: CGColorSpaceCreateDeviceRGB(),
+          bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue
+        ) else { return nil }
+        ctx.translateBy(x: 0, y: CGFloat(h))
+        ctx.scaleBy(x: 1, y: -1)
+        let scale = CGFloat(w) / CGFloat(scene.width)
+        ctx.scaleBy(x: scale, y: scale)
+        renderer.draw(into: ctx, atMs: 0)
+        return ctx.makeImage().map { CIImage(cgImage: $0) }
+      }
+      var world: CIImage?
+      var screen: CIImage?
+      if self.framingActive {
+        world = render(OverlayRenderer(file: scene, only: { $0.wd == 1 }), width: self.frameWidth, height: self.frameHeight)
+        screen = render(OverlayRenderer(file: scene, only: { $0.wd != 1 }), width: self.outputWidth, height: self.outputHeight)
+        if world == nil || screen == nil {
+          self.bump { self.failed += 1; self.lastProblem = "overlay image could not be made" }
+          return
+        }
+      } else {
+        screen = render(OverlayRenderer(file: scene), width: self.frameWidth, height: self.frameHeight)
+        if screen == nil {
+          self.bump { self.failed += 1; self.lastProblem = "overlay image could not be made" }
+          return
+        }
       }
       self.overlayLock.lock()
-      self.overlayImage = CIImage(cgImage: image)
+      self.overlayImage = screen
+      self.worldOverlayImage = world
       self.overlayLock.unlock()
       self.bump { self.decoded += 1 }
     }
@@ -1144,13 +1208,30 @@ final class CaptureController: NSObject {
     CVPixelBufferPoolCreatePixelBuffer(nil, pool, &created)
     guard let target = created else { return }
     var image = CIImage(cvPixelBuffer: pixelBuffer)
-    let overlay = currentOverlay()
-    if let overlay { image = overlay.composited(over: image) }
-    // The overlay is drawn at camera size first, then everything is scaled down to the size of the file.
     let sourceWidth = CGFloat(CVPixelBufferGetWidth(pixelBuffer))
     let sourceHeight = CGFloat(CVPixelBufferGetHeight(pixelBuffer))
-    if Int(sourceWidth) != outputWidth || Int(sourceHeight) != outputHeight {
-      image = image.transformed(by: CGAffineTransform(scaleX: CGFloat(outputWidth) / sourceWidth, y: CGFloat(outputHeight) / sourceHeight))
+    let overlay = currentOverlay()
+    if framingActive {
+      // Auto-framing crop: draw what belongs to the picture on the whole 4K frame, cut the window out and scale it to the size of the file,
+      // then draw the score, cards and court map on top at the size of the file.
+      overlayLock.lock()
+      let world = worldOverlayImage
+      overlayLock.unlock()
+      if let world { image = world.composited(over: image) }
+      let win = currentWindow(at: CMTimeGetSeconds(time))
+      let cw = CGFloat(win.w) * sourceWidth
+      let ch = CGFloat(win.w) * sourceHeight
+      let rect = CGRect(x: CGFloat(win.cx - win.w / 2) * sourceWidth, y: sourceHeight - CGFloat(win.cy - win.w / 2) * sourceHeight - ch, width: cw, height: ch)   // Core Image has its origin at the bottom left
+      image = image.cropped(to: rect)
+        .transformed(by: CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
+        .transformed(by: CGAffineTransform(scaleX: CGFloat(outputWidth) / cw, y: CGFloat(outputHeight) / ch))
+      if let overlay { image = overlay.composited(over: image) }
+    } else {
+      if let overlay { image = overlay.composited(over: image) }
+      // The overlay is drawn at camera size first, then everything is scaled down to the size of the file.
+      if Int(sourceWidth) != outputWidth || Int(sourceHeight) != outputHeight {
+        image = image.transformed(by: CGAffineTransform(scaleX: CGFloat(outputWidth) / sourceWidth, y: CGFloat(outputHeight) / sourceHeight))
+      }
     }
     ciContext.render(image, to: target)
     let ok = adaptor.append(target, withPresentationTime: time)

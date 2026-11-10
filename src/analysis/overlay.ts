@@ -46,6 +46,8 @@ export interface OverlayData {
   /** Court corners as fractions of the recorded video frame. */
   corners: Corners | null;
   snapshots: OverlaySnapshot[];
+  /** Auto-framing crop was on: the saved video shows a moving window of the full picture, but the corners and positions here are in the full picture. */
+  framing?: 'crop';
   /** The named shots, when shot types were on. */
   shots?: ShotRecord[];
 }

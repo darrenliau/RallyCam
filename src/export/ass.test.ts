@@ -190,6 +190,18 @@ describe('buildLiveScene (drawn into the video while recording)', () => {
     }
   });
 
+  it('marks the player rings and the shuttle trail as belonging to the picture, and the score and cards not', () => {
+    const scene = buildLiveScene({ config, state, snapshot, corners, frameAspect: 16 / 9, trail: [{ x: 0.4, y: 0.4 }, { x: 0.45, y: 0.42 }] });
+    const world = scene.items.filter((i) => i.wd === 1);
+    const screen = scene.items.filter((i) => i.wd !== 1);
+    expect(world.length).toBeGreaterThan(2);
+    expect(screen.length).toBeGreaterThan(world.length);
+    const screenTexts = screen.flatMap((i) => (i.k === 't' ? [i.s] : []));
+    expect(screenTexts).toContain('SMASH');            // the shuttle cards
+    expect(screenTexts).toContain('~12 m');            // the distance card
+    expect(world.flatMap((i) => (i.k === 't' ? [i.s] : []))).not.toContain('SMASH');
+  });
+
   it('draws the current score, tags and speed', () => {
     const texts = buildLiveScene({ config, state, snapshot, corners, frameAspect: 16 / 9 }).items.flatMap((i) => (i.k === 't' ? [i.s] : []));
     expect(texts).toContain('1'); // You: 1

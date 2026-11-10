@@ -87,6 +87,7 @@ export interface SceneShape {
   o: number; // fill opacity 0..1 (0 = no fill)
   sc?: string; // outline colour
   sw?: number; // outline width
+  wd?: 1; // belongs to the picture (rings, trail), not the screen: auto-framing crop moves it with the zoom
 }
 
 export interface SceneText {
@@ -104,6 +105,7 @@ export interface SceneText {
   an: 7 | 8 | 9; // x is the left / centre / right edge of the text, y is its top
   c: string;
   sp: number; // letter spacing
+  wd?: 1;
 }
 
 export type SceneItem = SceneShape | SceneText;
@@ -117,6 +119,8 @@ export interface Scene {
 interface Ctx {
   k: number; // design px to scene px
   items: SceneItem[];
+  /** Items made now belong to the picture (player rings, shuttle trail), not to the screen: auto-framing crop moves them with the zoom. */
+  world?: boolean;
   /** Leave out the shuttle cards while there is nothing to show in them. */
   hideEmptyShuttle?: boolean;
 }
@@ -129,6 +133,7 @@ interface Pos { x: number; y: number }
 function shape(c: Ctx, layer: number, a: number, b: number, drawing: string, pos: Pos, fill: string, opacity: number, opts: { stroke?: { width: number; color: string }; move?: { to: Pos } } = {}) {
   if (b - a < 10) return;
   c.items.push({
+    ...(c.world ? { wd: 1 } : {}),
     k: 's', l: layer, a, b, x: n1(pos.x), y: n1(pos.y), d: drawing, c: fill, o: opacity,
     ...(opts.move ? { mx: n1(opts.move.to.x), my: n1(opts.move.to.y) } : {}),
     ...(opts.stroke ? { sw: n1(opts.stroke.width), sc: opts.stroke.color } : {}),
@@ -139,6 +144,7 @@ function shape(c: Ctx, layer: number, a: number, b: number, drawing: string, pos
 function label(c: Ctx, layer: number, a: number, b: number, text: string, pos: Pos, size: number, color: string, opts: { bold?: boolean; anchor?: Anchor; spacing?: number; move?: { to: Pos } } = {}) {
   if (b - a < 10) return;
   c.items.push({
+    ...(c.world ? { wd: 1 } : {}),
     k: 't', l: layer, a, b, x: n1(pos.x), y: n1(pos.y), s: assText(text), z: n1(size * c.k), w: opts.bold ? 1 : 0, an: opts.anchor ?? 7, c: color, sp: opts.spacing ?? 0,
     ...(opts.move ? { mx: n1(opts.move.to.x), my: n1(opts.move.to.y) } : {}),
   });
@@ -421,10 +427,13 @@ export function buildLiveScene(input: LiveInput): Scene {
   if (snapshot) {
     const map = courtMap(cornersInBox(input.corners ?? { farLeft: { x: 0.3, y: 0.3 }, farRight: { x: 0.7, y: 0.3 }, nearRight: { x: 0.95, y: 0.8 }, nearLeft: { x: 0.05, y: 0.8 } }, resX, resY));
     mapDots(c, snapshot, colorOf, 0, LIVE_END);
+    c.world = true;
     players(c, { start: 0, end: LIVE_END, snap: snapshot }, map, colorOf);
+    c.world = false;
   }
   if (input.shuttleMap) shuttleOnMap(c, input.shuttleMap, 0, LIVE_END);
   // The shuttle's recent path, newest dot biggest
+  c.world = true;
   (input.trail ?? []).forEach((p, i, all) => {
     const age = (i + 1) / all.length; // 1 for the newest
     const r = (2 + 4 * age) * k;
@@ -432,6 +441,7 @@ export function buildLiveScene(input: LiveInput): Scene {
   });
   const newest = input.trail?.[input.trail.length - 1];
   if (newest) shuttleMarker(c, { x: newest.x * resX, y: newest.y * resY }, shuttleLabelText(snapshot?.shuttle?.speedKmh), 0, LIVE_END, resX);
+  c.world = false;
   return { width: resX, height: resY, items: c.items };
 }
 

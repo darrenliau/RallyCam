@@ -26,6 +26,7 @@ struct SceneItemJSON: Decodable {
   let w: Int?          // bold
   let an: Int?         // 7 left, 8 centre, 9 right
   let sp: Double?      // letter spacing
+  let wd: Int?         // 1: belongs to the picture (player rings, shuttle trail), not to the screen; used by auto-framing crop
 }
 
 private func color(_ hex: String, alpha: CGFloat = 1) -> UIColor {
@@ -139,9 +140,10 @@ final class OverlayRenderer {
   private var next = 0
   private var active: [SceneItem] = []
 
-  init(file: SceneFile) {
+  /// `only` keeps just the items it accepts (auto-framing draws the picture's items and the screen's items separately).
+  init(file: SceneFile, only: ((SceneItemJSON) -> Bool)? = nil) {
     sceneWidth = file.width
-    items = file.items.map(SceneItem.init).sorted { $0.start < $1.start }
+    items = file.items.filter { only?($0) ?? true }.map(SceneItem.init).sorted { $0.start < $1.start }
   }
 
   /// `ctx` must already be set up so that (0, 0) is the top left and one unit is one scene unit.

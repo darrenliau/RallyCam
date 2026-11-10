@@ -36,7 +36,7 @@ import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../ana
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
 import { effectiveFraming, framingAvailability } from '../framingSupport';
-import { Framer, fullWindow, startWindow, viewTransform, type ViewTransform } from '../analysis/framing';
+import { Framer, fullWindow, startWindow, WIDE_RATIO, viewTransform, type ViewTransform } from '../analysis/framing';
 import { playerSubjects, shuttleSubject } from '../analysis/framingSubjects';
 import { ViewWindow, type ViewWindowHandle } from '../components/ViewWindow';
 import { decodePose, hitPose, PoseHistory } from '../analysis/pose';
@@ -420,7 +420,9 @@ export default function Record() {
   const shotTypesOn = shuttleOn && settings.shotTypes;
   // Auto-framing: a view window that starts tight and widens when play nears the edge (see framing.ts). Only in builds whose camera can do it.
   const framingMode = effectiveFraming(settings.framing, framingAvailability(Capture));   // a mode this phone cannot do counts as off
-  const framingOn = framingMode !== 'off' && shuttleOn;
+  // The camera says what it really settled on (it falls back to off when the 4K picture is not possible); until then the wish counts.
+  const [cameraFraming, setCameraFraming] = useState<'off' | 'crop' | null>(null);
+  const framingOn = framingMode !== 'off' && shuttleOn && cameraFraming !== 'off';
   const framer = useRef(new Framer(fullWindow())).current;
   const previewView = useRef<ViewWindowHandle>(null);
   const worldView = useRef<ViewWindowHandle>(null);
@@ -578,6 +580,12 @@ export default function Record() {
     return () => { clearInterval(id); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [framingOn, framingMode, aligning]);
+
+  // A hot phone: stop tightening; a very hot one: go back to the full picture (the camera and the recording come first)
+  useEffect(() => {
+    const hot = pressure === 'serious' || pressure === 'critical' || pressure === 'shutdown';
+    framer.setOptions({ tightenRate: hot ? 0 : 0.1, minW: pressure === 'critical' || pressure === 'shutdown' ? 1 : WIDE_RATIO });
+  }, [pressure, framer]);
 
   // Body poses: the native side looks at the players nearest the shuttle; each pose goes to the track standing where its feet are
   useEffect(() => {
@@ -891,6 +899,7 @@ export default function Record() {
         corners: cornersToFrame(corners, { frameAspect: FRAME_ASPECT, screenW: width, screenH: height }),
         snapshots: snapshots.current,
         ...(shotRecords.current.length ? { shots: shotRecords.current } : {}),
+        ...(framingOn && cameraFraming === 'crop' ? { framing: 'crop' as const } : {}),
       });
     }
     if (shuttleLogUri.current) {
@@ -1062,6 +1071,8 @@ export default function Record() {
         onFps={setFps}
         lens={settings.lens}
         analysisCopy={settings.keepAnalysisCopy && !footage}
+        framing={framingOn ? framingMode : 'off'}
+        onFraming={setCameraFraming}
         onLens={setLensInfo}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
         videoProfile={usesNativeCapture ? profile : undefined}

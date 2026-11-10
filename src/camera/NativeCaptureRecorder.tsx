@@ -12,7 +12,7 @@ const VIDEO_FPS = 60;
  * iPhone camera made for RallyCam (modules/rallycam-export/ios): a preview, person detection with Apple's Vision framework,
  * and a recorder that draws the overlay onto every frame while it records. The saved file already has the overlay in it.
  */
-const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, onInterruption, onPressure, detection, videoProfile, lens, onLens, analysisCopy }, ref) {
+const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function NativeCaptureRecorder({ style, onReady, onError, onFps, onInterruption, onPressure, detection, videoProfile, lens, onLens, analysisCopy, framing, onFraming }, ref) {
   const native = Capture!;
   const analysisUri = useRef<string | undefined>(undefined);
   const Preview = CapturePreview!;
@@ -22,11 +22,13 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
     const errors = native.addListener('onError', (e) => onError(e.message));
     const interruptions = native.addListener('onInterruption', (e) => onInterruption?.(e));
     const pressure = native.addListener('onPressure', (e) => onPressure?.(e.level));
+    native.setFramingMode?.(framing ?? 'off');
     native.startSession(CAPTURE_FPS, lens ?? 'auto')
       .then((info) => {
         if (cancelled) return;
         onFps(info.fps);
         onLens?.({ lens: info.lens, available: native.getLenses() });
+        onFraming?.(info.framing ?? 'off');
         onReady();
       })
       .catch((e: Error) => onError(e.message));

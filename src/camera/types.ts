@@ -41,6 +41,9 @@ export interface RecorderProps {
   onPressure?: (level: string) => void;
   /** Also write a clean, smaller copy of the picture with no overlay, for analysing the game afterwards. iPhone camera only. */
   analysisCopy?: boolean;
+  /** Auto-framing wanted (iPhone camera only). The camera starts in that mode if the phone can, and `onFraming` says what it really settled on. */
+  framing?: 'off' | 'crop' | 'lens';
+  onFraming?: (mode: 'off' | 'crop') => void;
   /** The lens to start with ("auto", "ultra-wide", "wide" or "tele"). iPhone camera only. */
   lens?: string;
   /** Called when the camera starts and after every lens change, with the lens in use and the lenses the phone has. */

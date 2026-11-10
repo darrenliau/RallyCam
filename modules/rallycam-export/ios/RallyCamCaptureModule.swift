@@ -78,11 +78,19 @@ public class RallyCamCaptureModule: Module {
       CaptureController.shared.start(targetFps: targetFps, lens: lens) { result in
         switch result {
         case .success(let info):
-          promise.resolve(["fps": info.fps, "width": info.width, "height": info.height, "lens": info.lens])
+          promise.resolve(["fps": info.fps, "width": info.width, "height": info.height, "lens": info.lens, "framing": info.framing])
         case .failure(let error):
           promise.reject("ERR_CAPTURE", error.localizedDescription)
         }
       }
+    }
+
+    // Auto-framing. setFramingMode ("off" | "crop") before startSession; setFramingTarget while it runs (mode "lens" is not built yet and is ignored).
+    Function("setFramingMode") { (mode: String) in
+      CaptureController.shared.setFramingMode(mode)
+    }
+    Function("setFramingTarget") { (mode: String, cx: Double, cy: Double, w: Double) in
+      if mode == "crop" { CaptureController.shared.setFramingTarget(cx: cx, cy: cy, w: w) }
     }
 
     // What auto-framing the phone can do: { cropFps: most frames a second at 4K on the ultra-wide camera (0 = no 4K), lens: a camera joining the ultra-wide and wide lenses exists }.
