@@ -10,8 +10,9 @@ const BODY_M = 1.7;
 /**
  * The points of the full picture the view must hold for each tracked player: the feet and the top of the head (and a little above, for a
  * racket raised in a smash). `map` and `g` are those of the reference (full) picture. A player who is not seen at the moment is left out.
+ * `velocityOf` gives a player's speed in frame fractions a second, so the view can widen ahead of a running player.
  */
-export function playerSubjects(tracks: Track[], map: CourtMap, g: FrameGeometry): Subject[] {
+export function playerSubjects(tracks: Track[], map: CourtMap, g: FrameGeometry, velocityOf?: (id: number) => { vx: number; vy: number } | undefined): Subject[] {
   const out: Subject[] = [];
   for (const t of tracks) {
     if (t.lost) continue;
@@ -21,7 +22,9 @@ export function playerSubjects(tracks: Track[], map: CourtMap, g: FrameGeometry)
     if (!(ppm > 0)) continue;
     const f = screenToFrame(feet, g);
     const h = screenToFrame({ x: feet.x, y: feet.y - BODY_M * 1.15 * ppm }, g);
-    out.push({ ...f, kind: 'player' }, { ...h, kind: 'player' });
+    // a running player is expected to be further along soon: the view widens before they reach the edge
+    const v = velocityOf?.(t.id);
+    out.push({ ...f, ...(v ?? {}), kind: 'player' }, { ...h, ...(v ?? {}), kind: 'player' });
   }
   return out;
 }
