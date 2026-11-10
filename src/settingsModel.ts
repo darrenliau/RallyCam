@@ -38,6 +38,10 @@ export const FOOTAGE_PRESET: QualityPreset = { label: 'Footage', width: 1920, he
 /** About how many megabytes one minute of video takes (video track only, sound adds a little). */
 export const mbPerMinute = (p: QualityPreset): number => (p.bitrate / 8) * 60 / 1e6;
 
+/** Auto-framing: show and record a tighter view that widens when play nears the edge. `crop` cuts a moving window from a 4K picture, `lens` zooms the real lens. */
+export const FRAMING_MODES = ['off', 'crop', 'lens'] as const;
+export type FramingMode = (typeof FRAMING_MODES)[number];
+
 export interface Settings {
   quality: VideoQuality;
   /** The first-run guide has been seen. */
@@ -60,17 +64,20 @@ export interface Settings {
   watchPreview: boolean;
   /** Also keep a clean, smaller copy of each game with no overlay, for analysing the shuttle afterwards (iPhone only). */
   keepAnalysisCopy: boolean;
+  /** See FRAMING_MODES. Experimental; needs shuttle tracking and a build that has it. */
+  framing: FramingMode;
   /** The lens last used, so the saved court lines still fit next time. */
   lens: Lens;
 }
 
-export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, shuttleModel: false, cropModel: true, courtOnly: true, shotTypes: true, watchPreview: true, courtFollow: true, lastGame: '', keepAnalysisCopy: false, lens: 'auto' };
+export const DEFAULT_SETTINGS: Settings = { quality: 'balanced', guideSeen: false, experimentalShuttle: false, shuttleModel: false, cropModel: true, courtOnly: true, shotTypes: true, watchPreview: true, courtFollow: true, lastGame: '', keepAnalysisCopy: false, framing: 'off', lens: 'auto' };
 
 /** Reads one stored value back into the right type, ignoring anything unexpected. */
 export function parseSetting<K extends keyof Settings>(key: K, raw: string): Settings[K] | undefined {
   if (key === 'quality') return (raw in QUALITY ? raw : undefined) as Settings[K] | undefined;
   if (key === 'guideSeen' || key === 'experimentalShuttle' || key === 'shuttleModel' || key === 'cropModel' || key === 'courtOnly' || key === 'shotTypes' || key === 'watchPreview' || key === 'courtFollow' || key === 'keepAnalysisCopy') return (raw === '1' ? true : raw === '0' ? false : undefined) as Settings[K] | undefined;
   if (key === 'lastGame') return (parseLastGame(raw) ? raw : undefined) as Settings[K] | undefined;
+  if (key === 'framing') return ((FRAMING_MODES as readonly string[]).includes(raw) ? raw : undefined) as Settings[K] | undefined;
   if (key === 'lens') return ((LENSES as string[]).includes(raw) ? raw : undefined) as Settings[K] | undefined;
   return undefined;
 }

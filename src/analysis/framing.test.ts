@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { anyOutside, clampWindow, Framer, fullWindow, viewToWorld, wantedWindow, WIDE_RATIO, worldToView, DEFAULT_FRAMING } from './framing';
+import { startWindow, applyViewTransform, viewTransform, anyOutside, clampWindow, Framer, fullWindow, viewToWorld, wantedWindow, WIDE_RATIO, worldToView, DEFAULT_FRAMING } from './framing';
 
 describe('window maths', () => {
   it('maps the full window to itself', () => {
@@ -133,5 +133,62 @@ describe('Framer', () => {
       if (t > 0.5 && anyOutside([{ x: 0.5, y }], win, 1)) out++;
     }
     expect(out).toBe(0);
+  });
+});
+
+describe('players set the window, a shuttle only widens it', () => {
+  const players = [{ x: 0.45, y: 0.5, kind: 'player' as const }, { x: 0.55, y: 0.5, kind: 'player' as const }];
+  it('ignores a shuttle inside the window', () => {
+    const w = wantedWindow([...players, { x: 0.6, y: 0.4, vx: 0.1, vy: 0, kind: 'shuttle' }], DEFAULT_FRAMING)!.win;
+    expect(w.w).toBe(WIDE_RATIO);
+  });
+  it('widens for a shuttle outside it', () => {
+    const w = wantedWindow([...players, { x: 0.95, y: 0.5, kind: 'shuttle' }], DEFAULT_FRAMING)!.win;
+    expect(w.w).toBeGreaterThan(0.6);
+  });
+  it('widens for a shuttle about to leave', () => {
+    const calm = wantedWindow([...players, { x: 0.7, y: 0.5, vx: 0, vy: 0, kind: 'shuttle' }], DEFAULT_FRAMING)!.win.w;
+    const fast = wantedWindow([...players, { x: 0.7, y: 0.5, vx: 0.9, vy: 0, kind: 'shuttle' }], DEFAULT_FRAMING)!.win.w;
+    expect(fast).toBeGreaterThan(calm);
+  });
+  it('still frames a shuttle when no player is tracked', () => {
+    expect(wantedWindow([{ x: 0.5, y: 0.5, kind: 'shuttle' }], DEFAULT_FRAMING)).not.toBeNull();
+  });
+});
+
+describe('viewTransform', () => {
+  const g = { frameAspect: 16 / 9, screenW: 1600, screenH: 900 };
+  it('does nothing for the full window', () => {
+    const t = viewTransform(fullWindow(), g);
+    expect(t.scale).toBe(1);
+    expect(Math.abs(t.tx)).toBeLessThan(1e-9);
+  });
+  it('puts the window centre on the screen centre and scales about it', () => {
+    const win = { cx: 0.4, cy: 0.6, w: 0.5 };
+    const t = viewTransform(win, g);
+    expect(t.scale).toBe(2);
+    const centre = applyViewTransform({ x: 0.4 * 1600, y: 0.6 * 900 }, t, g);
+    expect(centre.x).toBeCloseTo(800);
+    expect(centre.y).toBeCloseTo(450);
+  });
+  it('puts the window edges on the screen edges (a frame the shape of the screen)', () => {
+    const win = { cx: 0.4, cy: 0.6, w: 0.5 };
+    const t = viewTransform(win, g);
+    const tl = applyViewTransform({ x: (0.4 - 0.25) * 1600, y: (0.6 - 0.25) * 900 }, t, g);
+    const br = applyViewTransform({ x: (0.4 + 0.25) * 1600, y: (0.6 + 0.25) * 900 }, t, g);
+    expect(tl.x).toBeCloseTo(0); expect(tl.y).toBeCloseTo(0);
+    expect(br.x).toBeCloseTo(1600); expect(br.y).toBeCloseTo(900);
+  });
+});
+
+describe('startWindow', () => {
+  it('is the closer view centred on the court, kept inside the picture', () => {
+    const w = startWindow([{ x: 0.3, y: 0.2 }, { x: 0.7, y: 0.2 }, { x: 0.9, y: 0.95 }, { x: 0.1, y: 0.95 }]);
+    expect(w.w).toBe(WIDE_RATIO);
+    expect(w.cx).toBeCloseTo(0.5);
+    expect(w.cy).toBeCloseTo(0.575);
+  });
+  it('is just the closer view without a court', () => {
+    expect(startWindow([])).toEqual({ cx: 0.5, cy: 0.5, w: WIDE_RATIO });
   });
 });

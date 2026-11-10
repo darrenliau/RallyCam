@@ -7,6 +7,9 @@
  * (the 0.5x view), `WIDE_RATIO` is the closer view of the main (1x) lens.
  */
 
+import { frameToScreen } from './preprocess';
+import type { FrameGeometry } from './tracker';
+
 export interface Window { cx: number; cy: number; w: number }
 export interface P { x: number; y: number }
 
@@ -32,8 +35,12 @@ export function viewToWorld(p: P, win: Window): P {
   return { x: win.cx - win.w / 2 + p.x * win.w, y: win.cy - win.w / 2 + p.y * win.w };
 }
 
-/** Something to keep in view: a player or the shuttle, in the reference frame, with its speed in frame fractions per second if known. */
-export interface Subject extends P { vx?: number; vy?: number }
+/**
+ * Something to keep in view, in the reference frame, with its speed in frame fractions per second if known. Players set the window; a
+ * shuttle (`kind: 'shuttle'`) only widens it when it is about to leave, because a shuttle crossing the court spans most of the picture
+ * and would otherwise keep the view wide in every rally.
+ */
+export interface Subject extends P { vx?: number; vy?: number; kind?: 'player' | 'shuttle' }
 
 export interface FramingOptions {
   /** Room kept around the subjects, as a fraction of the window. */
@@ -64,8 +71,7 @@ export const DEFAULT_FRAMING: FramingOptions = {
   widenRate: 0.35, tightenRate: 0.1, urgentRate: 0.9, tightenDwellS: 1.5, deadZone: 0.08, panTimeS: 0.6, panLocked: false,
 };
 
-/** The smallest window that holds every subject (and where each is expected to be soon) with the margin, or null when there are none. */
-export function wantedWindow(subjects: Subject[], opts: FramingOptions): { win: Window; hold: boolean } | null {
+function boxWindow(subjects: Subject[], opts: FramingOptions): Window | null {
   if (!subjects.length) return null;
   const pts: P[] = [];
   for (const s of subjects) {
@@ -76,7 +82,23 @@ export function wantedWindow(subjects: Subject[], opts: FramingOptions): { win: 
   const y0 = Math.min(...pts.map((p) => p.y)), y1 = Math.max(...pts.map((p) => p.y));
   // the window is square in fractions (same shape as the frame), so it must span the larger of the two
   const need = Math.max(x1 - x0, y1 - y0) / (1 - 2 * opts.margin);
-  const win = clampWindow({ cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: need }, opts.minW);
+  return clampWindow({ cx: (x0 + x1) / 2, cy: (y0 + y1) / 2, w: need }, opts.minW);
+}
+
+/**
+ * The smallest window that holds the players (and where each is expected to be soon) with the margin. A shuttle is added only when it is
+ * outside that window, or about to leave it; then the window grows to hold it. Null when there is nothing to hold.
+ */
+export function wantedWindow(subjects: Subject[], opts: FramingOptions): { win: Window; hold: boolean } | null {
+  const players = subjects.filter((s) => s.kind !== 'shuttle');
+  const shuttles = subjects.filter((s) => s.kind === 'shuttle');
+  const base = boxWindow(players, opts);
+  if (!base) {
+    const win = boxWindow(shuttles, opts);
+    return win ? { win, hold: false } : null;
+  }
+  const leaving = shuttles.filter((sh) => anyOutside([{ x: sh.x + (sh.vx ?? 0) * opts.lead, y: sh.y + (sh.vy ?? 0) * opts.lead }], base, 1 - opts.margin));
+  const win = leaving.length ? boxWindow([...players, ...leaving], opts)! : base;
   return { win, hold: false };
 }
 
@@ -148,4 +170,29 @@ export class Framer {
     this.win = clampWindow({ cx, cy, w }, o.minW);
     return this.win;
   }
+}
+
+/**
+ * How to draw the full picture's things so that only the window shows: scale about the screen centre, then shift so the window's centre
+ * lands on the screen's centre. For `crop` this is applied to the preview and to everything drawn on the picture (rings, trail); the
+ * scoreboard and cards are not moved.
+ */
+export interface ViewTransform { scale: number; tx: number; ty: number }
+export function viewTransform(win: Window, g: FrameGeometry): ViewTransform {
+  const s = 1 / win.w;
+  const c = frameToScreen({ x: win.cx, y: win.cy }, g);
+  return { scale: s, tx: s * (g.screenW / 2 - c.x), ty: s * (g.screenH / 2 - c.y) };
+}
+
+/** A point of the screen drawn with the full picture, moved by a view transform. */
+export function applyViewTransform(p: P, t: ViewTransform, g: FrameGeometry): P {
+  const cx = g.screenW / 2, cy = g.screenH / 2;
+  return { x: cx + t.scale * (p.x - cx) + t.tx, y: cy + t.scale * (p.y - cy) + t.ty };
+}
+
+/** Where the view starts once the court is locked: the closer (1x) view, centred on the court. `court` is its corners in the full picture. */
+export function startWindow(court: { x: number; y: number }[], minW = WIDE_RATIO): Window {
+  if (!court.length) return clampWindow({ cx: 0.5, cy: 0.5, w: minW }, minW);
+  const xs = court.map((p) => p.x), ys = court.map((p) => p.y);
+  return clampWindow({ cx: (Math.min(...xs) + Math.max(...xs)) / 2, cy: (Math.min(...ys) + Math.max(...ys)) / 2, w: minW }, minW);
 }

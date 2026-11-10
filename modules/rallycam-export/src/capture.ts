@@ -70,6 +70,11 @@ declare class RallyCamCaptureModule extends NativeModule<Events> {
   setPose(enabled: boolean): void;
   /** Where the shuttle is, in frame fractions, so the nearest players are looked at. NaN when not seen. */
   setPoseFocus(x: number, y: number): void;
+  /**
+   * Auto-framing (only in builds that have it). `crop`: the saved video and the preview show a window of the full 4K picture; `lens`: the
+   * camera zooms. cx, cy, w are the wanted window in the full picture (see src/analysis/framing.ts).
+   */
+  setFramingTarget?(mode: 'crop' | 'lens', cx: number, cy: number, w: number): void;
   setShuttleModel(enabled: boolean): void;
   getShuttleModelStatus(): ShuttleModelStatus;
   /** Gives the shuttle model only this part of the frame (fractions, origin top left, 16:9 in pixels), or the whole frame when all are 0. Reported positions stay fractions of the whole frame. */

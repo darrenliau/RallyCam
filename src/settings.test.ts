@@ -30,6 +30,8 @@ describe('parseSetting', () => {
     expect(parseSetting('keepAnalysisCopy', 'x')).toBeUndefined();
     expect(parseSetting('lens', 'ultra-wide')).toBe('ultra-wide');
     expect(parseSetting('lens', 'fisheye')).toBeUndefined();
+    expect(parseSetting('framing', 'crop')).toBe('crop');
+    expect(parseSetting('framing', 'zoom')).toBeUndefined();
   });
   it('ignores values it does not recognise', () => {
     expect(parseSetting('quality', 'ultra')).toBeUndefined();

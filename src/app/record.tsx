@@ -35,6 +35,9 @@ import { decodeBase64 } from '../analysis/base64';
 import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../analysis/courtLines';
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
+import { Framer, fullWindow, startWindow, viewTransform, type ViewTransform } from '../analysis/framing';
+import { playerSubjects, shuttleSubject } from '../analysis/framingSubjects';
+import { ViewWindow, type ViewWindowHandle } from '../components/ViewWindow';
 import { decodePose, hitPose, PoseHistory } from '../analysis/pose';
 import { toShotRecord } from '../analysis/shotRecord';
 import type { ShotRecord } from '../analysis/overlay';
@@ -414,6 +417,13 @@ export default function Record() {
   const shotRecords = useRef<ShotRecord[]>([]);
   const lastShot = useRef<{ at: number; shot: NonNullable<ShuttleStats['lastShot']> } | null>(null);
   const shotTypesOn = shuttleOn && settings.shotTypes;
+  // Auto-framing: a view window that starts tight and widens when play nears the edge (see framing.ts). Only in builds whose camera can do it.
+  const framingMode = settings.framing;
+  const framingOn = framingMode !== 'off' && shuttleOn && typeof Capture?.setFramingTarget === 'function';
+  const framer = useRef(new Framer(fullWindow())).current;
+  const previewView = useRef<ViewWindowHandle>(null);
+  const worldView = useRef<ViewWindowHandle>(null);
+  const [viewT, setViewT] = useState<ViewTransform | null>(null);
   const geometry = () => ({ frameAspect: FRAME_ASPECT, screenW: sizeRef.current.width, screenH: sizeRef.current.height });
   const estimator = useMemo(
     () => new ShuttleEstimator((x, y) => {
@@ -535,6 +545,38 @@ export default function Record() {
     });
     return () => { sub.remove(); clearInterval(id); native.setShuttleModel(false); modelFilter.reset(); setModelStatus(null); };
   }, [modelWanted, modelFilter, estimator]);
+
+  // Auto-framing: a few times a second, decide the window from the players and the shuttle, move the picture and its rings to it, and tell the camera
+  useEffect(() => {
+    const identity = { scale: 1, tx: 0, ty: 0 };
+    if (!framingOn) {
+      previewView.current?.set(identity, 0);
+      worldView.current?.set(identity, 0);
+      setViewT(null);
+      return;
+    }
+    const native = Capture!;
+    const apply = (win: ReturnType<Framer['update']>, ms: number) => {
+      const t = viewTransform(win, geometry());
+      if (framingMode === 'crop') previewView.current?.set(t, ms);   // a real lens zoom already shows the zoomed picture
+      worldView.current?.set(t, ms);
+      native.setFramingTarget?.(framingMode === 'lens' ? 'lens' : 'crop', win.cx, win.cy, win.w);
+      return t;
+    };
+    framer.setOptions({ panLocked: framingMode === 'lens' });
+    if (aligning) { framer.reset(fullWindow(), Date.now() / 1000); setViewT(apply(framer.window, 0)); return; }
+    const c = cornersToFrame(cornersRef.current, geometry());
+    framer.reset(startWindow([c.farLeft, c.farRight, c.nearRight, c.nearLeft]), Date.now() / 1000);
+    setViewT(apply(framer.window, 600));
+    const id = setInterval(() => {
+      const subjects = playerSubjects(latest.current.tracks, mapRef.current, geometry());
+      const tip = shuttleSubject(estimator.trail(lastShuttleT.current, 0.3), 0.3);
+      if (tip) subjects.push(tip);
+      setViewT(apply(framer.update(Date.now() / 1000, subjects), 140));
+    }, 125);
+    return () => { clearInterval(id); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [framingOn, framingMode, aligning]);
 
   // Body poses: the native side looks at the players nearest the shuttle; each pose goes to the track standing where its feet are
   useEffect(() => {
@@ -1010,6 +1052,7 @@ export default function Record() {
 
   return (
     <View style={s.fill}>
+      <ViewWindow ref={previewView}>
       <RecorderView
         ref={recorder}
         style={StyleSheet.absoluteFill}
@@ -1024,6 +1067,7 @@ export default function Record() {
         onInterruption={(info) => setPausedBecause(info.interrupted ? info.reason : null)}
         onPressure={setPressure}
       />
+      </ViewWindow>
       {venueLoaded && (
         <MatchOverlay
           width={width}
@@ -1042,6 +1086,8 @@ export default function Record() {
           trail={shuttleOn ? trail : undefined}
           shuttleMap={shuttleOn ? shuttleMap : undefined}
           mapTop={T + 40}
+          worldRef={worldView}
+          worldView={viewT}
         />
       )}
 
