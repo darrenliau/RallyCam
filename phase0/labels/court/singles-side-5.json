@@ -1,0 +1,7 @@
+{
+ "still": "singles-side-5.jpg",
+ "note": "Frame at 3 s of a recording of a singles game (mvun78i1_5, RallyCam's cards drawn on it): low camera behind and to the left of the court, looking along it; the court filmed is the one the player in black stands in, with other courts to its left. The first guess was a small court shifted left of the real one (confidence 1.00). Truth drawn by the user in red on the 1920 x 1080 frame: far edge from about (565, 607) to (1032, 588), near-right corner at (1675, 735), the left side line leaves the picture at (0, 795) and the near edge at (0, 905); the near-left corner (off the picture) is where those two lines meet, about (-476, 953).",
+ "kind": "behind",
+ "corners": {"farLeft": {"x": 0.294, "y": 0.562}, "farRight": {"x": 0.538, "y": 0.544}, "nearRight": {"x": 0.872, "y": 0.681}, "nearLeft": {"x": -0.248, "y": 0.883}},
+ "ignore": [[0, 0, 0.26, 0.32], [0.27, 0, 0.73, 0.26], [0.76, 0, 1, 0.38], [0, 0.69, 0.28, 1]]
+}
