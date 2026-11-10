@@ -1046,7 +1046,7 @@ final class CaptureController: NSObject {
         self.lastShuttleEmit = t
         var payload: [String: Any] = [
           "t": t,
-          "z": zoomAt(t),
+          "z": self.zoomAt(t),
           "candidates": result.candidates.count,
           "shaky": result.shaky,
         ]
