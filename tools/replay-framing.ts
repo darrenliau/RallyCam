@@ -3,10 +3,12 @@
  * (crop: the window can pan; lens: it stays centred), and reports what the view would have done.
  *
  *   python3 tools/read_rings.py clip.mp4 --out rings.csv --every 3                      (the app's own player rings, read from the video)
- *   npx tsx tools/replay-framing.ts --rings rings.csv --corners corners.json [--ball ball.csv[.gz] --ball-offset 0 --ball-width 1920 --ball-height 1080]
- *                                   [--width 960 --height 540 --fps 60 --seconds 15] [--out prefix]
+ *   npx tsx tools/replay-framing.ts --rings rings.csv (--corners corners.json | --horizon 0.35 --body-k 0.68) [--ball ball.csv[.gz] --ball-offset 0 --ball-width 1920 --ball-height 1080]
+ *                                   [--players 0,2] [--people boxes.csv] [--ball-not-followed] [--width 960 --height 540 --fps 60 --seconds 15] [--out prefix]
  *
- * The rings are in pixels of the clip they were read from (--width x --height); corners.json is the court as fractions of the frame. The
+ * The rings are in pixels of the clip they were read from (--width x --height); corners.json is the court as fractions of the frame. Without a court (a
+ * camera at the side of the hall, where the finder is not trusted), --horizon and --body-k give a body's height in the picture from where its feet are:
+ * (feet y - horizon) x body-k, as fractions of the picture's height. The
  * players are turned into the points the app holds in view (feet and head, `playerSubjects`) and the shuttle, if a TrackNet csv is given, into
  * `shuttleSubject`; the controller is stepped 8 times a second like record.tsx. With --out, writes prefix.crop.json and prefix.lens.json (the window
  * at each step, for tools/render-framing.py). Without --rings it uses the shuttle alone (a shuttle crossing the court keeps the view wide).
@@ -25,6 +27,7 @@ const flag = (n: string, d?: string) => { const i = args.indexOf(n); return i >=
 const W = Number(flag('--width', '960')), H = Number(flag('--height', '540')), fps = Number(flag('--fps', '60')), seconds = Number(flag('--seconds', '15'));
 const STEP = 1 / 8;
 const MARGIN = flag('--margin') != null ? Number(flag('--margin')) : undefined;
+const BALL_ONLY_MEASURED = args.includes('--ball-not-followed');   // the shuttle is only counted in the report, the view follows the players alone
 const PLAYER_LEAD = !args.includes('--no-player-lead');
 const g = { frameAspect: W / H, screenW: W, screenH: H };
 
@@ -55,7 +58,27 @@ for (const list of rings) {
   list.length = 0;
   list.push(...keep);
 }
-const haveRings = rings.some((l) => l.length > 0) && map != null;
+const HORIZON = Number(flag('--horizon', 'NaN')), BODY_K = Number(flag('--body-k', '0.68'));
+const pixelMode = !map && Number.isFinite(HORIZON);
+const ONLY = (flag('--players') ?? '').split(',').filter(Boolean).map(Number);
+if (ONLY.length) rings.forEach((l, i) => { if (!ONLY.includes(i)) l.length = 0; });   // for example singles: 0 (lime) and 2 (purple)
+// --- players from person boxes (frame,t,x,y,w,h,score as fractions of the frame): feet and head, the two largest boxes at each moment
+const peopleFile = flag('--people');
+const people: { t: number; x: number; y: number; w: number; h: number }[] = [];
+if (peopleFile && existsSync(peopleFile)) {
+  for (const line of readFileSync(peopleFile, 'utf8').split(/\r?\n/).slice(1)) {
+    const [, t, x, y, w, h, score] = line.split(',').map(Number);
+    if (Number.isFinite(t) && h >= 0.15 && score >= 0.5 && x + w / 2 > 0.15 && x + w / 2 < 0.92 && y + h > 0.4) people.push({ t, x, y, w, h });
+  }
+}
+function boxPlayers(t: number): Subject[] {
+  const near = people.filter((b) => Math.abs(b.t - t) <= 0.15);
+  const byTime = new Map<number, typeof near>();
+  for (const b of near) byTime.set(b.t, [...(byTime.get(b.t) ?? []), b]);
+  const best = [...byTime.entries()].sort((a, b) => Math.abs(a[0] - t) - Math.abs(b[0] - t))[0]?.[1] ?? [];
+  return best.sort((a, b) => b.h - a.h).slice(0, 2).flatMap((b) => [{ x: b.x + b.w / 2, y: b.y + b.h, kind: 'player' as const }, { x: b.x + b.w / 2, y: b.y, kind: 'player' as const }]);
+}
+const haveRings = people.length > 0 || (rings.some((l) => l.length > 0) && (map != null || pixelMode));
 function tracksAt(t: number): Track[] {
   const out: Track[] = [];
   if (!map) return out;
@@ -63,6 +86,26 @@ function tracksAt(t: number): Track[] {
     let best: Ring | undefined;
     for (const r of list) if (Math.abs(r.t - t) <= 0.25 && (!best || Math.abs(r.t - t) < Math.abs(best.t - t))) best = r;
     if (best) { const c = map.toCourt({ x: best.x, y: best.y }); out.push({ id, u: c.u, v: c.v }); }
+  });
+  return out;
+}
+
+/** Players from the ring pixels alone: the feet, and a head above them by the body height at that depth. */
+function pixelPlayers(t: number): Subject[] {
+  const out: Subject[] = [];
+  rings.forEach((list) => {
+    let best: Ring | undefined;
+    for (const r of list) if (Math.abs(r.t - t) <= 0.25 && (!best || Math.abs(r.t - t) < Math.abs(best.t - t))) best = r;
+    if (!best) return;
+    const x = best.x / W, y = best.y / H;
+    const body = Math.max(0.05, (y - HORIZON) * BODY_K) * 1.15;
+    let v: { vx: number; vy: number } | undefined;
+    if (PLAYER_LEAD) {
+      let then: Ring | undefined;
+      for (const r of list) if (Math.abs(r.t - (t - 0.5)) <= 0.25 && (!then || Math.abs(r.t - (t - 0.5)) < Math.abs(then.t - (t - 0.5)))) then = r;
+      if (then) v = { vx: (best.x - then.x) / W / 0.5, vy: (best.y - then.y) / H / 0.5 };
+    }
+    out.push({ x, y, ...(v ?? {}), kind: 'player' }, { x, y: y - body, ...(v ?? {}), kind: 'player' });
   });
   return out;
 }
@@ -84,8 +127,12 @@ function shuttleAt(t: number) {
   return trail.length ? shuttleSubject(trail.map((s) => ({ x: s.x, y: s.y })), 0.3) : null;
 }
 
-if (!haveRings && !shuttle.length) { console.error('give --rings and --corners, or --ball'); process.exit(1); }
-const courtPts = frac ? [frac.farLeft, frac.farRight, frac.nearRight, frac.nearLeft] : [];
+if (!haveRings && !shuttle.length) { console.error('give --rings and --corners (or --horizon), or --ball'); process.exit(1); }
+// where the view starts: on the court if there is one, otherwise on the players as they first are
+let startPts: { x: number; y: number }[] = frac ? [frac.farLeft, frac.farRight, frac.nearRight, frac.nearLeft] : [];
+if (!frac && people.length) { for (let t = 0; t <= seconds && !startPts.length; t += 0.25) startPts = boxPlayers(t); }
+if (!frac && !startPts.length && pixelMode) { for (let t = 0; t <= seconds && !startPts.length; t += 0.25) startPts = pixelPlayers(t); }
+const courtPts = startPts;
 
 interface Metrics { mode: string; steps: number; playersOutside: number; playersSeen: number; shuttleOutside: number; shuttleSeen: number; meanW: number; minW: number; maxW: number; fastestWiden: number; fastestTighten: number; timeAt: Record<string, number> }
 function run(mode: 'crop' | 'lens') {
@@ -102,9 +149,9 @@ function run(mode: 'crop' | 'lens') {
       const a = screenToFrame(map.toScreen(then.u, then.v), g), b = screenToFrame(map.toScreen(now.u, now.v), g);
       return { vx: (b.x - a.x) / 0.5, vy: (b.y - a.y) / 0.5 };
     };
-    const players = haveRings && map ? playerSubjects(tracksAt(t), map, g, velocity) : [];
+    const players = people.length ? boxPlayers(t) : haveRings && map ? playerSubjects(tracksAt(t), map, g, velocity) : haveRings ? pixelPlayers(t) : [];
     const ball = shuttleAt(t);
-    const subjects: Subject[] = [...players, ...(ball ? [ball] : [])];
+    const subjects: Subject[] = [...players, ...(ball && !BALL_ONLY_MEASURED ? [ball] : [])];
     const before = framer.window;
     // is what the viewer sees (the window as it was just before this step) missing someone?
     if (players.length) { m.playersSeen++; if (anyOutside(players, before, 1)) m.playersOutside++; }

@@ -1,6 +1,6 @@
 """Shows what the auto-framing view would have been on a recording: the original with the two windows drawn on it, and the picture each would have recorded.
 
-  python3 tools/render-framing.py clip.mp4 prefix out.mp4        (prefix.crop.json and prefix.lens.json from tools/replay-framing.ts --out prefix)
+  python3 tools/render-framing.py clip.mp4 prefix out.mp4 [shrink]       (prefix.crop.json and prefix.lens.json from tools/replay-framing.ts --out prefix)
 
 Left: the whole picture with the window of crop mode (green) and of lens zoom (amber). Right: the picture each window would have saved, scaled up to the
 clip's size (the clip is 960 wide, so a tight window looks soft; the app records from a 4K picture in crop mode). The clip's own overlay (rings, score
@@ -14,6 +14,7 @@ import cv2
 import numpy as np
 
 src, prefix, out = sys.argv[1:4]
+shrink = float(sys.argv[4]) if len(sys.argv) > 4 else 1.0   # for example 0.5 to halve a 1080p clip's size
 paths = {m: json.load(open(f"{prefix}.{m}.json")) for m in ("crop", "lens")}
 cap = cv2.VideoCapture(src)
 fps = cap.get(cv2.CAP_PROP_FPS)
@@ -40,7 +41,7 @@ def cut(frame, win):
 
 
 ff = subprocess.Popen(["ffmpeg", "-v", "error", "-y", "-f", "rawvideo", "-pix_fmt", "bgr24", "-s", f"{W + RW}x{H}", "-r", str(fps), "-i", "-",
-                       "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "20", out], stdin=subprocess.PIPE)
+                       "-vf", f"scale=trunc(iw*{shrink}/2)*2:trunc(ih*{shrink}/2)*2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "22", out], stdin=subprocess.PIPE)
 colors = {"crop": (80, 220, 80), "lens": (60, 170, 255)}
 i = 0
 while True:
