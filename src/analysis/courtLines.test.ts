@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { ambiguityCap, consensusCourt, courtDistance, findCourt, findCourts, type CourtFit, type LumaImage } from './courtLines';
+import { ambiguityCap, consensusCourt, courtDistance, courtOutlineDistance, findCourt, findCourts, findCourtsInLooks, type CourtFit, type LumaImage } from './courtLines';
 import { courtMap, type Corners } from './court';
 
 const W = 640;
@@ -121,5 +121,47 @@ describe('ambiguityCap', () => {
   });
   it('is a guess when a quite different court is nearly as good', () => {
     expect(ambiguityCap(a, far, 0.92)).toBe(0.6);
+  });
+});
+
+describe('findCourtsInLooks', () => {
+  const truth: Corners = { farLeft: { x: 0.34, y: 0.44 }, farRight: { x: 0.66, y: 0.44 }, nearRight: { x: 0.92, y: 0.86 }, nearLeft: { x: 0.08, y: 0.86 } };
+  /** A bright blob (a player in white) at one place. */
+  const withBlob = (img: LumaImage, cx: number, cy: number) => {
+    const data = new Uint8Array(img.data);
+    for (let y = cy - 14; y <= cy + 14; y++) for (let x = cx - 5; x <= cx + 5; x++) if (x >= 0 && y >= 0 && x < W && y < H) data[y * W + x] = 250;
+    return { ...img, data };
+  };
+  it('finds the court from several looks at it', () => {
+    const base = render(truth);
+    const fit = findCourtsInLooks([base, base, base], {}, 1)[0];
+    expect(fit).toBeDefined();
+    expect(courtDistance(fit.corners, truth)).toBeLessThan(0.03);
+  });
+  it('ignores a mark that is in one look only', () => {
+    const base = render(truth);
+    const looks = [withBlob(base, 200, 250), base, withBlob(base, 420, 270)];
+    const fit = findCourtsInLooks(looks, {}, 1)[0];
+    expect(fit).toBeDefined();
+    expect(courtDistance(fit.corners, truth)).toBeLessThan(0.03);
+  });
+  it('is the plain finder for one look', () => {
+    const base = render(truth);
+    expect(findCourtsInLooks([base], {}, 1)[0].corners).toEqual(findCourts(base, {}, 1)[0].corners);
+  });
+});
+
+describe('courtOutlineDistance', () => {
+  const a: Corners = { farLeft: { x: 0.34, y: 0.44 }, farRight: { x: 0.66, y: 0.44 }, nearRight: { x: 0.92, y: 0.86 }, nearLeft: { x: 0.08, y: 0.86 } };
+  it('is zero for the same court and small for a corner moved only outside the picture', () => {
+    expect(courtOutlineDistance(a, a)).toBe(0);
+    const farAway: Corners = { ...a, nearLeft: { x: -0.6, y: 1.4 } };
+    const b: Corners = { ...a, nearLeft: { x: -0.7, y: 1.55 } };
+    expect(courtOutlineDistance(farAway, b)).toBeLessThan(0.02);
+    expect(courtDistance(farAway, b)).toBeGreaterThan(0.03);
+  });
+  it('is large for a different court', () => {
+    const other: Corners = { farLeft: { x: 0.2, y: 0.5 }, farRight: { x: 0.4, y: 0.5 }, nearRight: { x: 0.7, y: 0.75 }, nearLeft: { x: -0.3, y: 0.75 } };
+    expect(courtOutlineDistance(a, other)).toBeGreaterThan(0.05);
   });
 });

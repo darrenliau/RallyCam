@@ -1,4 +1,5 @@
 import { courtMap, type Corners, type Pt } from './court';
+import { LONG_BACK, SHORT, SINGLES, refitFromLines } from './courtFit';
 
 /** A grey picture: one byte of brightness per pixel, row by row. */
 export interface LumaImage { data: Uint8Array; width: number; height: number }
@@ -20,9 +21,6 @@ export interface FindOptions {
 }
 
 /** The marked lines of a doubles court as segments in court units (u across 0..1, v along 0..1, far end at 0), 13.4 m by 6.1 m. */
-const SINGLES = 0.46 / 6.1;
-const SHORT = 1.98 / 13.4;
-const LONG_BACK = 0.76 / 13.4;
 const SEGMENTS: [number, number, number, number][] = [
   [0, 0, 1, 0], [0, 1, 1, 1], [0, 0, 0, 1], [1, 0, 1, 1],                       // outer: far and near baselines, side lines
   [SINGLES, 0, SINGLES, 1], [1 - SINGLES, 0, 1 - SINGLES, 1],                   // singles side lines
@@ -34,6 +32,8 @@ const SEGMENTS: [number, number, number, number][] = [
 const CENTRE_BIAS = 0.4;
 /** Two courts closer than this (picture widths, see courtDistance) are the same candidate. */
 const DISTINCT = 0.05;
+/** ...or when the parts of their outlines that are in the picture are this close (picture widths). */
+const SAME_OUTLINE = 0.012;
 /** Side lines are lines at least this steep (degrees from horizontal). A wide lens makes them shallower than the 22 degrees this used to be. */
 const ALONG_MIN_ANGLE = 8;
 const OUTER = 4; // the first four segments are the outer lines
@@ -45,8 +45,10 @@ const UNEXPLAINED_WEIGHT = 0;
  * At 1.5 the real court wins there and the stills in phase0/labels/court are unchanged.
  */
 const HIT_POWER = 1.5;
-/** When the best two courts are this far apart (see courtDistance) and nearly as good as each other, the finder is not sure which is right. */
-const AMBIGUOUS_DISTANCE = 0.08;
+/** A court settled on all the lines is kept when its pixel match is at least this share of the first guess's. */
+const REFIT_KEEP = 0.93;
+/** When the best two courts are this far apart (see courtOutlineDistance) and nearly as good as each other, the finder is not sure which is right. */
+const AMBIGUOUS_DISTANCE = 0.03;
 const AMBIGUOUS_RANK = 0.85;
 
 interface Line { a: number; b: number; c: number; angle: number; votes: number }  // ax + by + c = 0 with a, b normalised, angle from horizontal (0..90)
@@ -288,8 +290,30 @@ export function findCourt(img: LumaImage, options: FindOptions = {}): CourtFit |
  * with several courts the right one is not always the best match, so the user can step through the others.
  */
 export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3): CourtFit[] {
-  const { width: w, height: h } = img;
-  const mask = lineMask(img, options.skipTop ?? 0.38, options.ignore);
+  return findCourtsFromMask(lineMask(img, options.skipTop ?? 0.38, options.ignore), img.width, img.height, options, count);
+}
+
+/**
+ * The same, from several pictures of the same still scene (the camera on a tripod, a few tenths of a second apart). A court line is in every one
+ * of them; a player, a shuttle, a flash of glare or the picture's noise is in some. Only white marks seen in at least `need` of the pictures
+ * (default: more than half) are kept, so the lines the finder works from are the same from one look to the next, and the court found is too.
+ */
+export function findCourtsInLooks(imgs: LumaImage[], options: FindOptions = {}, count = 3, need = Math.floor(imgs.length / 2) + 1): CourtFit[] {
+  if (!imgs.length) return [];
+  const { width: w, height: h } = imgs[0];
+  if (imgs.length === 1 || imgs.some((i) => i.width !== w || i.height !== h)) return findCourts(imgs[0], options, count);
+  const sum = new Uint8Array(w * h);
+  for (const img of imgs) {
+    const m = lineMask(img, options.skipTop ?? 0.38, options.ignore);
+    for (let i = 0; i < m.length; i++) sum[i] += m[i];
+  }
+  // a mark may move by a pixel between looks (a hand on the tripod, the picture's own shimmer): a mark counts where one is within a pixel in enough looks
+  const mask = new Uint8Array(w * h);
+  for (let i = 0; i < sum.length; i++) mask[i] = sum[i] >= need ? 1 : 0;
+  return findCourtsFromMask(mask, w, h, options, count);
+}
+
+function findCourtsFromMask(mask: Uint8Array, w: number, h: number, options: FindOptions, count: number): CourtFit[] {
   const lines = houghLines(mask, w, h, 44);
   // baselines and service lines run roughly across the picture, side lines run away from the camera. Only the strongest of each are tried.
   const across = lines.filter((l) => l.angle < 28).slice(0, 14);
@@ -353,9 +377,14 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
       }
       if (!improved) break;
     }
+    // The court is ranked on where the nudging left it. Then its corners are settled on all the lines at once: the corners outside the picture
+    // hang on the lines' tiny angles otherwise, and move a long way between two looks at the same court.
     const final = rate(corners);
     if (final.hitShare < 0.3) continue;
-    const leftover = unexplained(corners, mask, w, h, blank);
+    const unsettled = corners;
+    const settled = refitFromLines(corners, lines, w, h);
+    if (plausible(settled, w, h) && rate(settled).value >= current * REFIT_KEEP) corners = settled;
+    const leftover = unexplained(unsettled, mask, w, h, blank);
     const mid = { x: (corners.farLeft.x + corners.farRight.x + corners.nearRight.x + corners.nearLeft.x) / 4, y: (corners.farLeft.y + corners.farRight.y + corners.nearRight.y + corners.nearLeft.y) / 4 };
     const away = Math.hypot(mid.x - centre.x, mid.y - centre.y) / w;
     found.push({
@@ -377,7 +406,7 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
   const ranks: number[] = [];
   for (const { fit, leftover, rank } of found) {
     (fit as CourtFit & { leftover?: number }).leftover = leftover;
-    if (out.every((o) => courtDistance(o.corners, fit.corners) > DISTINCT)) { out.push(fit); ranks.push(rank); }
+    if (out.every((o) => !sameCourt(o.corners, fit.corners))) { out.push(fit); ranks.push(rank); }
     if (out.length >= count) break;
   }
   // two quite different courts that fit about equally well: say so, instead of claiming the first is right
@@ -387,13 +416,40 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
 
 /** The most confidence the first court may have: low (a guess) when the second is far from it and nearly as good, otherwise no limit. */
 export function ambiguityCap(first: Corners, second: Corners, rankRatio: number): number {
-  return courtDistance(first, second) > AMBIGUOUS_DISTANCE && rankRatio >= AMBIGUOUS_RANK ? 0.6 : 1;
+  return courtOutlineDistance(first, second) > AMBIGUOUS_DISTANCE && rankRatio >= AMBIGUOUS_RANK ? 0.6 : 1;
 }
 
 /** For the tools that draw what the finder sees. */
 export const internals = { lineMask, houghLines, dilate, score, plausible, unexplained, unexplainedCounts };
 
 const KEYS = ['farLeft', 'farRight', 'nearRight', 'nearLeft'] as const;
+
+/**
+ * How different two courts look: the average distance between the parts of their outlines that are inside the picture, both ways, in picture
+ * widths (y scaled by the picture's shape). Corners outside the picture cannot be seen, and move a long way for a tiny turn of a line, so
+ * `courtDistance` calls two looks at one court different when they are not; this does not. Falls back to the corner distance when little
+ * of either outline is in the picture.
+ */
+export function courtOutlineDistance(a: Corners, b: Corners, aspect = 16 / 9): number {
+  const outline = (c: Corners) => {
+    const pts: Pt[] = [];
+    for (let i = 0; i < 4; i++) {
+      const p = c[KEYS[i]], q = c[KEYS[(i + 1) % 4]];
+      for (let t = 0; t < 60; t++) {
+        const x = p.x + ((q.x - p.x) * t) / 60, y = p.y + ((q.y - p.y) * t) / 60;
+        if (x >= 0 && x <= 1 && y >= 0 && y <= 1) pts.push({ x, y: y / aspect });
+      }
+    }
+    return pts;
+  };
+  const A = outline(a), B = outline(b);
+  if (A.length < 20 || B.length < 20) return courtDistance(a, b, aspect);
+  const mean = (from: Pt[], to: Pt[]) => from.reduce((sum, p) => sum + Math.min(...to.map((q) => Math.hypot(p.x - q.x, p.y - q.y))), 0) / from.length;
+  return (mean(A, B) + mean(B, A)) / 2;
+}
+
+/** The same court seen twice: the outlines that can be seen are the same, or the corners are. */
+const sameCourt = (a: Corners, b: Corners) => courtOutlineDistance(a, b) < SAME_OUTLINE || courtDistance(a, b) < DISTINCT;
 
 /** Average distance (in picture widths, y scaled by the picture's shape) between the same corners of two courts. */
 export function courtDistance(a: Corners, b: Corners, aspect = 16 / 9): number {
@@ -412,11 +468,11 @@ export function consensusCourt(fits: CourtFit[]): CourtFit | null {
   if (fits.length === 1) return { corners: fits[0].corners, confidence: fits[0].confidence * 0.5 };
   let best = 0, bestSpread = Infinity;
   fits.forEach((f, i) => {
-    const others = fits.filter((_, j) => j !== i).map((o) => courtDistance(f.corners, o.corners));
+    const others = fits.filter((_, j) => j !== i).map((o) => courtOutlineDistance(f.corners, o.corners));
     const spread = others.reduce((s, d) => s + d, 0) / others.length;
     if (spread < bestSpread) { bestSpread = spread; best = i; }
   });
   // looks that disagree wildly are not looks at the same court: say so with a low confidence
-  const agreement = Math.max(0, 1 - bestSpread / 0.15);
+  const agreement = Math.max(0, 1 - bestSpread / 0.06);
   return { corners: fits[best].corners, confidence: fits[best].confidence * (0.4 + 0.6 * agreement) };
 }

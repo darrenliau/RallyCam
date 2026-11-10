@@ -32,7 +32,7 @@ import { extensionOf, formatBytes, freeSpaceBytes, keepFile, newShuttleLogFile, 
 import { FOOTAGE_PRESET, LENS_LABEL, QUALITY, mbPerMinute, nextLensName, updateSettings, useSettings } from '../settings';
 import { getVenue, saveVenueCorners, type Venue } from '../db/venues';
 import { decodeBase64 } from '../analysis/base64';
-import { consensusCourt, courtDistance, findCourts, type CourtFit } from '../analysis/courtLines';
+import { courtDistance, courtOutlineDistance, findCourtsInLooks, type CourtFit } from '../analysis/courtLines';
 import { floorPosition } from '../analysis/court';
 import { hitterSide } from '../analysis/hitter';
 import { effectiveFraming, framingAvailability } from '../framingSupport';
@@ -314,22 +314,22 @@ export default function Record() {
     finderBusy.current = true;
     setCourtFinder('finding');
     try {
-      const tops: CourtFit[] = [];
-      const others: CourtFit[] = [];
+      // Three pictures a moment apart (the camera is on a tripod): the court is found from the white marks that are in most of them, so a
+      // player or a flash of glare in one picture does not change which court is found
+      const looks: { data: Uint8Array; width: number; height: number }[] = [];
       for (let i = 0; i < 3; i++) {
         if (i) await new Promise((r) => setTimeout(r, 400));
         const still = await native.grabStill(640);
         await new Promise((r) => setTimeout(r, 0)); // let the screen update between pictures
-        const list = findCourts({ data: decodeBase64(still.data), width: still.width, height: still.height }, {}, 3);
-        if (list[0]) tops.push(list[0]);
-        others.push(...list.slice(1));
+        looks.push({ data: decodeBase64(still.data), width: still.width, height: still.height });
       }
-      const best = consensusCourt(tops);
+      const list = findCourtsInLooks(looks, {}, 4);
+      const best = list[0];
       if (best && best.confidence >= 0.5) {
         // the best guess first, then the other courts that were found, each listed once
         const options = [best];
-        for (const f of others.sort((a, b) => b.confidence - a.confidence)) {
-          if (options.every((o) => courtDistance(o.corners, f.corners) > 0.05)) options.push(f);
+        for (const f of list.slice(1)) {
+          if (options.every((o) => courtDistance(o.corners, f.corners) > 0.05 && courtOutlineDistance(o.corners, f.corners) > 0.012)) options.push(f);
           if (options.length >= 4) break;
         }
         courtOptions.current = options;
