@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { consensusCourt, courtDistance, findCourt, findCourts, type CourtFit, type LumaImage } from './courtLines';
+import { ambiguityCap, consensusCourt, courtDistance, findCourt, findCourts, type CourtFit, type LumaImage } from './courtLines';
 import { courtMap, type Corners } from './court';
 
 const W = 640;
@@ -106,5 +106,20 @@ describe('consensusCourt', () => {
   });
   it('has nothing to say with no looks', () => {
     expect(consensusCourt([])).toBeNull();
+  });
+});
+
+describe('ambiguityCap', () => {
+  const a: Corners = { farLeft: { x: 0.3, y: 0.5 }, farRight: { x: 0.6, y: 0.5 }, nearRight: { x: 0.9, y: 0.7 }, nearLeft: { x: 0.0, y: 0.7 } };
+  const near: Corners = { ...a, farLeft: { x: 0.31, y: 0.5 } };
+  const far: Corners = { farLeft: { x: 0.2, y: 0.57 }, farRight: { x: 0.35, y: 0.57 }, nearRight: { x: 0.65, y: 0.72 }, nearLeft: { x: -1.1, y: 1.0 } };
+  it('is no limit when the second court is much worse', () => {
+    expect(ambiguityCap(a, far, 0.5)).toBe(1);
+  });
+  it('is no limit when the second court is nearly the same', () => {
+    expect(ambiguityCap(a, near, 0.99)).toBe(1);
+  });
+  it('is a guess when a quite different court is nearly as good', () => {
+    expect(ambiguityCap(a, far, 0.92)).toBe(0.6);
   });
 });

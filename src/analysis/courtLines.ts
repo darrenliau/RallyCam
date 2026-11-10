@@ -15,6 +15,8 @@ export interface FindOptions {
   skipTop?: number;
   /** Rectangles (fractions of the picture: x0, y0, x1, y1) to treat as blank, for example text drawn over a recorded video. */
   ignore?: [number, number, number, number][];
+  /** For the tools: called with how each shortlisted court was ranked (best first). */
+  debug?: (rows: { rank: number; value: number; hitShare: number; away: number; leftover: number; corners: Corners }[]) => void;
 }
 
 /** The marked lines of a doubles court as segments in court units (u across 0..1, v along 0..1, far end at 0), 13.4 m by 6.1 m. */
@@ -35,6 +37,17 @@ const DISTINCT = 0.05;
 /** Side lines are lines at least this steep (degrees from horizontal). A wide lens makes them shallower than the 22 degrees this used to be. */
 const ALONG_MIN_ANGLE = 8;
 const OUTER = 4; // the first four segments are the outer lines
+/** How much a court is marked down for white marks inside it that its own lines do not explain (0 to 1). Off: it did not tell the right court from the wrong one (a smaller court has less inside to explain). */
+const UNEXPLAINED_WEIGHT = 0;
+/**
+ * The share of a court's template that is on real lines counts to this power in the ranking. It was 2, which put a small court that sits on a
+ * dense patch of lines (a camera low at the side of the hall sees many lines) ahead of the real court: 0.88 of its template was on lines against 0.73.
+ * At 1.5 the real court wins there and the stills in phase0/labels/court are unchanged.
+ */
+const HIT_POWER = 1.5;
+/** When the best two courts are this far apart (see courtDistance) and nearly as good as each other, the finder is not sure which is right. */
+const AMBIGUOUS_DISTANCE = 0.08;
+const AMBIGUOUS_RANK = 0.85;
 
 interface Line { a: number; b: number; c: number; angle: number; votes: number }  // ax + by + c = 0 with a, b normalised, angle from horizontal (0..90)
 
@@ -194,6 +207,49 @@ function score(c: Corners, near: Uint8Array, w: number, h: number, stamp: Int32A
   return { value, outerHit: outerTotal ? outerHit / outerTotal : 0, hitShare: total ? hit / total : 0 };
 }
 
+/**
+ * The share of the white marks inside the court's outline that its own lines do not explain. A court placed wrongly (on the lines of a
+ * neighbouring court, or between its own) has the real lines of the court crossing its inside; the right one explains almost all of them.
+ * `mask` is the white marks (not widened). A mark within `tolerance` pixels of a line of the court counts as explained.
+ */
+function unexplained(c: Corners, mask: Uint8Array, w: number, h: number, blank?: Uint8Array, tolerance = 3): number {
+  const r = unexplainedCounts(c, mask, w, h, blank, tolerance);
+  return r.inside < 30 ? 0 : r.left / r.inside;
+}
+
+function unexplainedCounts(c: Corners, mask: Uint8Array, w: number, h: number, blank?: Uint8Array, tolerance = 3): { inside: number; left: number } {
+  const map = courtMap(c);
+  const lines = new Uint8Array(w * h);
+  for (const [u0, v0, u1, v1] of SEGMENTS) {
+    const a = map.toScreen(u0, v0), b = map.toScreen(u1, v1);
+    const len = Math.hypot(b.x - a.x, b.y - a.y);
+    if (!Number.isFinite(len)) return { inside: 0, left: 0 };
+    const steps = Math.min(2000, Math.max(8, Math.ceil(len)));
+    for (let k = 0; k <= steps; k++) {
+      const t = k / steps;
+      const x = Math.round(a.x + (b.x - a.x) * t), y = Math.round(a.y + (b.y - a.y) * t);
+      for (let dy = -tolerance; dy <= tolerance; dy++) for (let dx = -tolerance; dx <= tolerance; dx++) {
+        const xx = x + dx, yy = y + dy;
+        if (xx >= 0 && yy >= 0 && xx < w && yy < h) lines[yy * w + xx] = 1;
+      }
+    }
+  }
+  const q = [c.farLeft, c.farRight, c.nearRight, c.nearLeft];
+  const cross = (a: Pt, b: Pt, x: number, y: number) => (b.x - a.x) * (y - a.y) - (b.y - a.y) * (x - a.x);
+  const x0 = Math.max(0, Math.floor(Math.min(...q.map((p) => p.x)))), x1 = Math.min(w - 1, Math.ceil(Math.max(...q.map((p) => p.x))));
+  const y0 = Math.max(0, Math.floor(Math.min(...q.map((p) => p.y)))), y1 = Math.min(h - 1, Math.ceil(Math.max(...q.map((p) => p.y))));
+  let inside = 0, left = 0;
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+    const i = y * w + x;
+    if (!mask[i] || (blank && blank[i])) continue;
+    const s0 = cross(q[0], q[1], x, y), s1 = cross(q[1], q[2], x, y), s2 = cross(q[2], q[3], x, y), s3 = cross(q[3], q[0], x, y);
+    if (!((s0 >= 0 && s1 >= 0 && s2 >= 0 && s3 >= 0) || (s0 <= 0 && s1 <= 0 && s2 <= 0 && s3 <= 0))) continue;
+    inside++;
+    if (!lines[i]) left++;
+  }
+  return { inside, left };
+}
+
 /** Court positions (along its length) a straight line across the picture can be: far baseline to near baseline. The net has no line on the floor. */
 const ACROSS_V = [0, LONG_BACK, 0.5 - SHORT, 0.5 + SHORT, 1 - LONG_BACK, 1];
 /** Which two of them the two chosen lines can be: the lower line is usually the near baseline or the near long service line. */
@@ -283,7 +339,7 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
   // Look closely at the best few, and nudge each corner a pixel or two at a time while the fit improves
   const keys = ['farLeft', 'farRight', 'nearRight', 'nearLeft'] as const;
   const f = (p: Pt): Pt => ({ x: p.x / w, y: p.y / h });
-  const found: { fit: CourtFit; rank: number }[] = [];
+  const found: { fit: CourtFit; rank: number; leftover: number; info: { value: number; hitShare: number; away: number; leftover: number; corners: Corners } }[] = [];
   for (const cand of shortlist) {
     let corners = cand.c;
     let current = rate(corners).value;
@@ -299,6 +355,7 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
     }
     const final = rate(corners);
     if (final.hitShare < 0.3) continue;
+    const leftover = unexplained(corners, mask, w, h, blank);
     const mid = { x: (corners.farLeft.x + corners.farRight.x + corners.nearRight.x + corners.nearLeft.x) / 4, y: (corners.farLeft.y + corners.farRight.y + corners.nearRight.y + corners.nearLeft.y) / 4 };
     const away = Math.hypot(mid.x - centre.x, mid.y - centre.y) / w;
     found.push({
@@ -308,21 +365,33 @@ export function findCourts(img: LumaImage, options: FindOptions = {}, count = 3)
       },
       // The match score adds up over every pixel of the court's lines, so a court that is too big (it takes in the lines of the court next
       // to it) wins on size alone. Weighting by the share of the template that is on real lines puts the court whose own lines fit best first.
-      rank: current * final.hitShare * final.hitShare * (1 - CENTRE_BIAS * Math.min(1, away)),
-    });
+      rank: current * Math.pow(final.hitShare, HIT_POWER) * (1 - CENTRE_BIAS * Math.min(1, away)) * (1 - UNEXPLAINED_WEIGHT * leftover),
+      leftover,
+      info: { value: current, hitShare: final.hitShare, away, leftover, corners: { farLeft: f(corners.farLeft), farRight: f(corners.farRight), nearRight: f(corners.nearRight), nearLeft: f(corners.nearLeft) } },
+    } as { fit: CourtFit; rank: number; leftover: number; info: { value: number; hitShare: number; away: number; leftover: number; corners: Corners } });
   }
   found.sort((a, b) => b.rank - a.rank);
+  options.debug?.(found.map((x) => ({ rank: x.rank, ...x.info })));
   // courts that are nearly the same are one candidate
   const out: CourtFit[] = [];
-  for (const { fit } of found) {
-    if (out.every((o) => courtDistance(o.corners, fit.corners) > DISTINCT)) out.push(fit);
+  const ranks: number[] = [];
+  for (const { fit, leftover, rank } of found) {
+    (fit as CourtFit & { leftover?: number }).leftover = leftover;
+    if (out.every((o) => courtDistance(o.corners, fit.corners) > DISTINCT)) { out.push(fit); ranks.push(rank); }
     if (out.length >= count) break;
   }
+  // two quite different courts that fit about equally well: say so, instead of claiming the first is right
+  if (out.length >= 2) out[0] = { ...out[0], confidence: Math.min(out[0].confidence, ambiguityCap(out[0].corners, out[1].corners, ranks[1] / Math.max(1e-9, ranks[0]))) };
   return out;
 }
 
+/** The most confidence the first court may have: low (a guess) when the second is far from it and nearly as good, otherwise no limit. */
+export function ambiguityCap(first: Corners, second: Corners, rankRatio: number): number {
+  return courtDistance(first, second) > AMBIGUOUS_DISTANCE && rankRatio >= AMBIGUOUS_RANK ? 0.6 : 1;
+}
+
 /** For the tools that draw what the finder sees. */
-export const internals = { lineMask, houghLines, dilate, score, plausible };
+export const internals = { lineMask, houghLines, dilate, score, plausible, unexplained, unexplainedCounts };
 
 const KEYS = ['farLeft', 'farRight', 'nearRight', 'nearLeft'] as const;
 
