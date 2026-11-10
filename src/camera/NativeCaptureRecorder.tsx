@@ -32,7 +32,7 @@ const NativeCaptureRecorder = forwardRef<RecorderHandle, RecorderProps>(function
         if (cancelled) return;
         onFps(info.fps);
         onLens?.({ lens: info.lens, available: native.getLenses() });
-        onFraming?.(info.framing ?? 'off', info.lensWideRatio || undefined);
+        onFraming?.(info.framing ?? 'off', info.lensWideRatio || undefined, info.framingNote || undefined);
         onReady();
       })
       .catch((e: Error) => onError(e.message));

@@ -54,7 +54,7 @@ type Events = {
 };
 
 declare class RallyCamCaptureModule extends NativeModule<Events> {
-  startSession(targetFps: number, lens: string): Promise<{ fps: number; width: number; height: number; lens: string; framing?: 'off' | 'crop' | 'lens'; lensWideRatio?: number }>;
+  startSession(targetFps: number, lens: string): Promise<{ fps: number; width: number; height: number; lens: string; framing?: 'off' | 'crop' | 'lens'; lensWideRatio?: number; framingNote?: string }>;
   getLenses(): string[];
   /** What auto-framing the phone can do (only in builds that have it): the most frames a second at 4K on the ultra-wide camera (0 = no 4K), and whether a camera joining the ultra-wide and wide lenses exists. */
   getFramingSupport?(): { cropFps: number; lens: boolean };

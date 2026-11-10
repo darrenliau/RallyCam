@@ -44,7 +44,7 @@ export interface RecorderProps {
   /** Auto-framing wanted (iPhone camera only). The camera starts in that mode if the phone can, and `onFraming` says what it really settled on. */
   framing?: 'off' | 'crop' | 'lens';
   /** What the camera really settled on; for lens zoom, `wideRatio` is the narrowest window (0.5 when the 1x lens takes over at 2x). */
-  onFraming?: (mode: 'off' | 'crop' | 'lens', wideRatio?: number) => void;
+  onFraming?: (mode: 'off' | 'crop' | 'lens', wideRatio?: number, note?: string) => void;
   /** The lens to start with ("auto", "ultra-wide", "wide" or "tele"). iPhone camera only. */
   lens?: string;
   /** Called when the camera starts and after every lens change, with the lens in use and the lenses the phone has. */

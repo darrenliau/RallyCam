@@ -12,6 +12,8 @@ struct CaptureInfo {
   var framing: String = "off"
   /// Lens zoom mode: the window width of the tightest zoom as a fraction of the full picture (0.5 when the 1x lens takes over at 2x).
   var lensWideRatio: Double = 0
+  /// Empty when all went as asked. Otherwise what auto-framing had to change at start-up and why (see configureAndRun).
+  var framingNote: String = ""
 }
 
 enum CaptureError: LocalizedError {
@@ -280,12 +282,43 @@ final class CaptureController: NSObject {
   }
 
   private func configureAndRun(targetFps: Int, lens wanted: String) throws -> CaptureInfo {
-    NSLog("RallyCam: starting the camera, wanted \(targetFps) fps, lens \(wanted)")
-    let fps = try configure(targetFps: targetFps, lens: wanted)
-    cameraFps = fps
+    NSLog("RallyCam: starting the camera, wanted \(targetFps) fps, lens \(wanted), framing \(framingMode)")
     observeSession()
-    if !session.isRunning { session.startRunning() }
-    NSLog("RallyCam: camera session running = \(session.isRunning), \(fps) fps, lens \(lens)")
+    let wantedMode = framingMode
+    defer { framingMode = wantedMode }
+
+    // Auto-framing is only trusted once pictures really arrive: try the wanted mode, then the same at 30 fps (far lighter at 4K), then the plain camera.
+    var attempts: [(mode: String, fps: Int)] = [(wantedMode, targetFps)]
+    if wantedMode != "off" { attempts.append((wantedMode, 30)); attempts.append(("off", targetFps)) }
+    var notes: [String] = []
+    var fps = 0
+    var firstFps = 0
+    for (index, attempt) in attempts.enumerated() {
+      if index > 0 && attempt.mode != "off" && attempt.fps >= firstFps { continue }   // the same attempt again
+      framingMode = attempt.mode
+      fps = try configure(targetFps: attempt.fps, lens: wanted)
+      cameraFps = fps
+      if index == 0 { firstFps = fps }
+      let before = framesSeen()
+      if !session.isRunning { session.startRunning() }
+      NSLog("RallyCam: camera session running = \(session.isRunning), \(fps) fps, lens \(lens), framing \(framingActive ? "crop" : lensActive ? "lens" : "off")")
+      if attempt.mode == "off" {                                // the plain camera is not checked: it is what worked before
+        if index > 0 { notes.append("Auto-framing was switched off.") }
+        break
+      }
+      if !framingActive && !lensActive {                        // the phone could not do the mode at all: configure already used the plain camera
+        notes.append("\(attempt.mode == "crop" ? "Crop" : "Lens zoom") is not possible on this phone's camera, so the plain camera is used.")
+        break
+      }
+      let rate = measureFrames(since: before)
+      let name = attempt.mode == "crop" ? "Crop (4K)" : "Lens zoom"
+      if rate >= max(15, Double(fps) * 0.5) {
+        if index > 0 { notes.append("\(name) runs at \(fps) fps: \(firstFps) fps did not keep up.") }
+        break
+      }
+      NSLog("RallyCam: \(name) at \(fps) fps gave \(rate) frames a second, trying the next choice")
+      notes.append(rate <= 0 ? "No picture arrived with \(name) at \(fps) fps." : "\(name) at \(fps) fps gave only \(Int(rate)) frames a second.")
+    }
     // The preview has no camera connection until the session has its input, and new connections start in portrait. The preview
     // only turned them landscape when its view next laid out, which could be before the camera was ready. So tell it now, and once
     // more when the screen has finished turning to landscape.
@@ -296,7 +329,24 @@ final class CaptureController: NSObject {
         self.refreshOrientation()
       }
     }
-    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens, framing: framingActive ? "crop" : lensActive ? "lens" : "off", lensWideRatio: lensActive ? 1 / lensMaxZoom : 0)
+    return CaptureInfo(fps: fps, width: frameWidth, height: frameHeight, lens: lens, framing: framingActive ? "crop" : lensActive ? "lens" : "off", lensWideRatio: lensActive ? 1 / lensMaxZoom : 0, framingNote: notes.joined(separator: " "))
+  }
+
+  private func framesSeen() -> Int {
+    statsLock.lock()
+    defer { statsLock.unlock() }
+    return framesIn
+  }
+
+  /// Waits up to 2.5 s for pictures to arrive after `before` frames, then measures how many a second come over the next 0.6 s. 0 when none came.
+  private func measureFrames(since before: Int) -> Double {
+    let start = CACurrentMediaTime()
+    while CACurrentMediaTime() - start < 2.5 && framesSeen() - before < 3 { Thread.sleep(forTimeInterval: 0.05) }
+    guard framesSeen() - before >= 3 else { return 0 }
+    let n0 = framesSeen()
+    let t0 = CACurrentMediaTime()
+    Thread.sleep(forTimeInterval: 0.6)
+    return Double(framesSeen() - n0) / (CACurrentMediaTime() - t0)
   }
 
   private var observing = false

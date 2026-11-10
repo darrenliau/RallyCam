@@ -108,6 +108,8 @@ export default function Record() {
   const lensRestored = useRef(false);
   const findCourtRef = useRef<() => void>(() => {});
   const [pausedBecause, setPausedBecause] = useState<string | null>(null);
+  const pausedRef = useRef<string | null>(null);
+  pausedRef.current = pausedBecause;
   const [pressure, setPressure] = useState('nominal');
 
   // Court alignment and player tags
@@ -422,6 +424,10 @@ export default function Record() {
   const framingMode = effectiveFraming(settings.framing, framingAvailability(Capture));   // a mode this phone cannot do counts as off
   // The camera says what it really settled on (it falls back to off when the 4K picture is not possible); until then the wish counts.
   const [cameraFraming, setCameraFraming] = useState<'off' | 'crop' | 'lens' | null>(null);
+  // What the camera had to change at start-up (it falls back from 4K / lens zoom when no picture arrives) and why
+  const [framingNote, setFramingNote] = useState('');
+  // The camera is not delivering a picture (no frames, or a black one): what it says about itself, so a black screen explains itself
+  const [noPicture, setNoPicture] = useState<string | null>(null);
   // Lens zoom: how tight the real lens can go (the window width at the 1x lens), from the camera; the controller's tightest window follows it
   const [wideRatio, setWideRatio] = useState(WIDE_RATIO);
   const framingOn = framingMode !== 'off' && shuttleOn && cameraFraming !== 'off';
@@ -589,6 +595,29 @@ export default function Record() {
     const hot = pressure === 'serious' || pressure === 'critical' || pressure === 'shutdown';
     framer.setOptions({ tightenRate: hot ? 0 : 0.1, minW: pressure === 'critical' || pressure === 'shutdown' ? 1 : framingMode === 'lens' ? wideRatio : WIDE_RATIO });
   }, [pressure, framer, framingMode, wideRatio]);
+
+  // Camera watchdog: if no pictures arrive (or only black ones) for several seconds, say so and what the camera is, instead of showing nothing
+  useEffect(() => {
+    const native = Capture;
+    if (!native || !usesNativeCapture || isExpoGo) return;
+    let last = -1;
+    let bad = 0;
+    const id = setInterval(() => {
+      const st = native.getStatus();
+      const stalled = st.framesIn === last;
+      const black = !stalled && st.framesIn > 60 && st.luma < 1;
+      last = st.framesIn;
+      if (st.interrupted && !st.running && st.framesIn === 0) return;   // not started yet
+      bad = stalled || black ? bad + 1 : 0;
+      if (bad >= 3 && !pausedRef.current) {
+        setNoPicture(`${stalled ? 'No picture is arriving' : 'The picture is black'} (camera ${st.device || 'not found'}, ${st.lens || 'no lens'}, ${st.running ? 'running' : 'not running'}, ${st.framesIn} pictures so far, auto-framing ${framingMode}${cameraFraming ? `/${cameraFraming}` : ''}).`);
+      } else if (bad === 0) {
+        setNoPicture(null);
+      }
+    }, 2000);
+    return () => clearInterval(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [framingMode, cameraFraming]);
 
   // Body poses: the native side looks at the players nearest the shuttle; each pose goes to the track standing where its feet are
   useEffect(() => {
@@ -1080,7 +1109,7 @@ export default function Record() {
         lens={settings.lens}
         analysisCopy={settings.keepAnalysisCopy && !footage}
         framing={framingOn ? framingMode : 'off'}
-        onFraming={(mode, ratio) => { setCameraFraming(mode); if (mode === 'lens' && ratio) setWideRatio(ratio); }}
+        onFraming={(mode, ratio, note) => { setCameraFraming(mode); if (mode === 'lens' && ratio) setWideRatio(ratio); if (note) setFramingNote(note); }}
         onLens={setLensInfo}
         detection={isExpoGo ? undefined : { enabled: !aligning, roi, onDetections: bridge.emit }}
         videoProfile={usesNativeCapture ? profile : undefined}
@@ -1126,6 +1155,9 @@ export default function Record() {
             <Text style={s.chipText}>Players {tracks.filter((t) => !t.lost).length}/{names.length}</Text>
           </View>
         )}
+        {framingOn && cameraFraming && (
+          <View style={s.chip}><Text style={[s.chipText, framingNote !== '' && { color: colors.amber }]}>{cameraFraming === 'crop' ? 'Crop 4K' : 'Lens zoom'}</Text></View>
+        )}
         {training && <View style={s.chip}><Text style={[s.chipText, { color: colors.accent }]}>Training · no score</Text></View>}
         {footage && <View style={s.chip}><Text style={[s.chipText, { color: colors.accent }]}>Footage capture · no overlay</Text></View>}
         {!aligning && <Text style={s.chip2} onPress={() => setAligning(true)} accessibilityRole="button">Re-align court</Text>}
@@ -1133,6 +1165,18 @@ export default function Record() {
 
       {courtNote && !aligning && (
         <Text style={[s.err, { top: T + 60, left: (width - 380) / 2, width: 380, backgroundColor: courtNote.warn ? 'rgba(160,110,20,0.95)' : 'rgba(20,90,60,0.92)' }]}>{courtNote.text}</Text>
+      )}
+
+      {framingNote !== '' && (
+        <Text style={[s.err, { top: T + 132, left: (width - 400) / 2, width: 400, backgroundColor: 'rgba(160,110,20,0.95)' }]} onPress={() => setFramingNote('')}>{framingNote} (tap to hide)</Text>
+      )}
+      {noPicture && (
+        <View style={[s.err, { top: T + 170, left: (width - 420) / 2, width: 420, backgroundColor: 'rgba(160,40,30,0.95)', gap: 8 }]}>
+          <Text style={{ color: '#fff', fontSize: 12 }}>The camera is not delivering a picture. {noPicture}{settings.framing !== 'off' ? ' Auto-framing may be the cause.' : ''}</Text>
+          {settings.framing !== 'off' && (
+            <Button kind="ghost" label="Switch auto-framing off (then go Back and start again)" onPress={() => { updateSettings({ framing: 'off' }); setNoPicture(null); }} style={s.devBtn} />
+          )}
+        </View>
       )}
 
       {pausedBecause && (

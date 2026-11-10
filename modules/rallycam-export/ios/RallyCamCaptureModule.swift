@@ -78,7 +78,7 @@ public class RallyCamCaptureModule: Module {
       CaptureController.shared.start(targetFps: targetFps, lens: lens) { result in
         switch result {
         case .success(let info):
-          promise.resolve(["fps": info.fps, "width": info.width, "height": info.height, "lens": info.lens, "framing": info.framing, "lensWideRatio": info.lensWideRatio])
+          promise.resolve(["fps": info.fps, "width": info.width, "height": info.height, "lens": info.lens, "framing": info.framing, "lensWideRatio": info.lensWideRatio, "framingNote": info.framingNote])
         case .failure(let error):
           promise.reject("ERR_CAPTURE", error.localizedDescription)
         }
