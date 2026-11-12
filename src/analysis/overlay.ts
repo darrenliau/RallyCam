@@ -29,6 +29,8 @@ export interface ShotRecord {
   /** Player index (as in the names list), or null when not known. */
   player: number | null;
   type: string;
+  /** A variant of the family, for example "low serve". */
+  note?: string;
   confidence: number;
   kmh: number | null;
   metres: number | null;

@@ -76,6 +76,7 @@ export class ShuttleEstimator {
   // Speed of a shot from where the two players stood at its two hits (see shotSpeed.ts); only when `hitterAt` is given
   private prevShot: { t: number; floor: Floor; track?: number; number: number } | null = null;
   private shotLog: ShotEvent[] = [];
+  private lastShotType: ShotEvent['type'] | undefined;
   private shotsTaken = 0;
   private samplesSinceHit = 0;
   private strays = 0;
@@ -101,6 +102,7 @@ export class ShuttleEstimator {
 
   newRally() {
     this.finishAtLanding();
+    this.lastShotType = undefined;
     this.shots = 0;
     this.peakKmh = 0;
     this.lastShotKmh = 0;
@@ -205,7 +207,8 @@ export class ShuttleEstimator {
   /** Names the shot that began at `prev`: it went to `to` (the next hitter's spot, or where it came down) in `seconds`. */
   private finishShot(prev: { t: number; floor: Floor; track?: number; number: number }, to: Floor | null, seconds: number | null) {
     const pose = prev.track != null ? this.poseOf?.(prev.track, prev.t) ?? null : null;
-    const r = classifyShot({ number: prev.number, from: prev.floor, to, seconds, height: pose?.height });
+    const r = classifyShot({ number: prev.number, from: prev.floor, to, seconds, height: pose?.height, previous: this.lastShotType });
+    this.lastShotType = r.type;
     this.shotLog.push({
       ...r, number: prev.number, t: prev.t, track: prev.track, from: prev.floor, to,
       ...(pose ? { height: pose.height, pose: packPose(pose.pose) } : {}),

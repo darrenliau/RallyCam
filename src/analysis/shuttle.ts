@@ -18,7 +18,7 @@ export interface ShuttleOnMap {
   inBounds?: boolean;
 }
 
-const SHOT_TYPES: [string, number][] = [['CLEAR', 95], ['DROP', 55], ['SMASH', 215], ['NET SHOT', 30], ['DRIVE', 125], ['LIFT', 80]];
+const SHOT_TYPES: [string, number][] = [['CLEAR', 95], ['DROP', 55], ['SMASH', 215], ['NET SHOT', 30], ['DRIVE', 125], ['LIFT', 80], ['PUSH', 90], ['FLICK', 110], ['BLOCK', 50], ['KILL', 190]];
 
 /** Made-up shuttle numbers for trying the screen without a tracker. Debug builds only. */
 export class SimulatedShuttle {

@@ -94,10 +94,12 @@ for (const s of shots) {
   if (prev && side(prev.track) === side(s.track) && side(s.track) !== '?' && s.t - prev.t < 1.5 && !args.includes('--keep-repeats')) continue;
   kept.push(s);
 }
+let before: ReturnType<typeof classifyShot>['type'] | undefined;
 const named = kept.map((s, i) => {
   const next = kept[i + 1];
-  const r = classifyShot({ number: i + 1, from: s.from, to: next ? next.from : s.to, seconds: next ? next.t - s.t : null });
-  return { ...s, type: r.type, confidence: r.confidence, kmh: r.kmh, metres: r.metres, number: i + 1 };
+  const r = classifyShot({ number: i + 1, from: s.from, to: next ? next.from : s.to, seconds: next ? next.t - s.t : null, previous: before });
+  before = r.type;
+  return { ...s, type: r.type, confidence: r.confidence, kmh: r.kmh, metres: r.metres, number: i + 1, note: r.note };
 });
 
 const clock = (t: number) => `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, '0')}`;

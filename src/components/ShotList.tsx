@@ -57,7 +57,7 @@ export function ShotList({ shots, names, colorOf, onSeek }: { shots: ShotRecord[
             <View style={{ flex: 1, gap: 2 }}>
               <Text style={[s.type, { color }]}>{sh.type}{sh.confidence < 0.5 ? ' ?' : ''}</Text>
               <Text style={s.muted}>Shot {sh.number}{bits ? ` · ${bits}` : ''}</Text>
-              <Text style={s.muted}>{sh.height ? `hit ${sh.height === 'overhead' ? 'above the head' : sh.height === 'low' ? 'low' : 'at the side'}` : 'from position and speed only'}{sh.confidence < 0.5 ? ' · a guess' : ''}</Text>
+              <Text style={s.muted}>{sh.height ? `hit ${sh.height === 'overhead' ? 'above the head' : sh.height === 'low' ? 'low' : 'at the side'}` : 'from position and speed only'}{sh.note ? ` · ${sh.note}` : ''}{sh.confidence < 0.5 ? ' · a guess' : ''}</Text>
             </View>
           </Pressable>
         );

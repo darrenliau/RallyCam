@@ -8,7 +8,7 @@ const spot = (f: { u: number; v: number } | null) => (f ? { u: r3(f.u), v: r3(f.
 /** A shot as saved with the game. `tMs` is when it was hit, in milliseconds since recording started. */
 export function toShotRecord(e: ShotEvent, tMs: number, player: number | null): ShotRecord {
   return {
-    t: Math.round(tMs), number: e.number, player, type: e.type,
+    t: Math.round(tMs), number: e.number, player, type: e.type, ...(e.note ? { note: e.note } : {}),
     confidence: Math.round(e.confidence * 100) / 100,
     kmh: e.kmh == null ? null : Math.round(e.kmh),
     metres: e.metres == null ? null : r1(e.metres),
